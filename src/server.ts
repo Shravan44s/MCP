@@ -12,6 +12,7 @@ import { TelegramClient } from "./services/telegram-client.js";
 import { registerTelegramTools } from "./tools/telegram.js";
 import { InstagramClient } from "./services/instagram-client.js";
 import { registerInstagramTools } from "./tools/instagram.js";
+import { registerAITools } from "./tools/ai.js";
 import { registerTaskProcessorTools } from "./engine/task-processor.js";
 import type { AppConfig } from "./types/index.js";
 
@@ -46,6 +47,7 @@ export function createServer(config: AppConfig): McpServer {
   registerVSCodeTools(server, vscodeClient);
   registerTelegramTools(server, telegramClient);
   registerInstagramTools(server, instagramClient);
+  registerAITools(server);
   registerTaskProcessorTools(
     server,
     notionClient,
