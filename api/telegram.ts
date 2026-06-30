@@ -22,7 +22,11 @@ Manage your automated workspace directly from chat!
 
 📸 <b>Instagram</b>
 • <code>/post [Image URL] | [Caption]</code> - Post an image to Instagram
-• <code>/aiart [Post Caption]</code> - Generate a custom AI photo and post it directly to Instagram
+• <code>/aiart [Post Caption]</code> - Generate AI art, review, then confirm to post
+• <code>/igstats</code> - 📊 Instagram analytics dashboard
+
+🤖 <b>AI Usage</b>
+• <code>/credits</code> - View AI service usage & credit status
 
 <i>Or just type a message, and it will be added as a general task to your Notion database!</i>
 `;
@@ -82,12 +86,227 @@ export default async function handler(
       const command = commandParts[0].toLowerCase();
       const args = text.slice(command.length).trim();
 
+      if (command.startsWith("/confirm_")) {
+        const shortId = command.replace("/confirm_", "");
+        await telegram.sendMessage("⏳ Verifying task and publishing to Instagram...");
+
+        try {
+          const tasks = await notion.listTasks({ status: "Todo" });
+          const task = tasks.find((t) => t.id.replace(/-/g, "").startsWith(shortId));
+
+          if (!task) {
+            await telegram.sendMessage("❌ Pending task not found or already processed.");
+            return res.status(200).json({ status: "not_found" });
+          }
+
+          if (!instagram) {
+            await telegram.sendMessage("❌ Instagram client is not configured on this server.");
+            return res.status(200).json({ status: "unconfigured" });
+          }
+
+          const imageUrl = task.details;
+          if (!imageUrl || !imageUrl.startsWith("http")) {
+            await telegram.sendMessage("❌ Invalid image URL found in task details.");
+            return res.status(200).json({ status: "invalid_details" });
+          }
+
+          await notion.updateTaskStatus(task.id, "In Progress");
+          const publishRes = await instagram.publishPhoto(imageUrl, task.name);
+          await notion.updateTaskStatus(task.id, "Done");
+          await notion.writeResult(task.id, `✅ Published to Instagram. Media ID: ${publishRes.mediaId}`);
+
+          await telegram.sendMessage(
+            `🚀 <b>Instagram Post Deployed!</b>\n\n` +
+            `• <b>Caption:</b> ${task.name}\n` +
+            `• <b>Media ID:</b> <code>${publishRes.mediaId}</code>\n` +
+            `🔗 <a href="https://instagram.com/">View on Instagram</a>`
+          );
+        } catch (err: any) {
+          await telegram.sendMessage(`❌ <b>Failed to publish post:</b> ${err.message}`);
+        }
+        return res.status(200).json({ status: "success" });
+      }
+
       switch (command) {
         case "/start":
         case "/help": {
           await telegram.sendMessage(HELP_MESSAGE);
           break;
         }
+
+        case "/igstats": {
+          if (!instagram) {
+            await telegram.sendMessage("❌ Instagram client is not configured.");
+            break;
+          }
+          await telegram.sendMessage("⏳ Fetching Instagram analytics...");
+          try {
+            const [stats, insights, media] = await Promise.all([
+              instagram.getAccountStats(),
+              instagram.getInsights().catch(() => null),
+              instagram.getRecentMedia(5).catch(() => []),
+            ]);
+
+            const fmt = (n: number) => n.toLocaleString("en-IN");
+            const ago = (ts: string) => {
+              const d = Math.floor((Date.now() - new Date(ts).getTime()) / 86400000);
+              return d === 0 ? "Today" : d === 1 ? "Yesterday" : `${d}d ago`;
+            };
+
+            let msg =
+              `📊 <b>Instagram Dashboard</b>\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+              `👤 <b>@${stats.username}</b>\n\n` +
+              `👥 <b>Followers:</b>  ${fmt(stats.followers)}\n` +
+              `➡️ <b>Following:</b>  ${fmt(stats.following)}\n` +
+              `🖼️ <b>Total Posts:</b> ${fmt(stats.mediaCount)}\n`;
+
+            if (insights) {
+              msg +=
+                `\n📈 <b>Last 7 Days</b>\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `👁️ <b>Impressions:</b>    ${fmt(insights.impressions)}\n` +
+                `🌐 <b>Reach:</b>          ${fmt(insights.reach)}\n` +
+                `🔍 <b>Profile Views:</b>  ${fmt(insights.profileViews)}\n`;
+            }
+
+            if (media.length > 0) {
+              msg += `\n🕒 <b>Recent Posts</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+              for (const m of media) {
+                const cap = (m.caption || "No caption").substring(0, 35);
+                msg += `• ${ago(m.timestamp)} | ❤️ ${m.likes} 💬 ${m.comments} | <i>${cap}...</i>\n`;
+              }
+            }
+
+            msg += `\n🔗 <a href="https://instagram.com/${stats.username}">View Profile</a>`;
+            await telegram.sendMessage(msg);
+          } catch (e: any) {
+            await telegram.sendMessage(`❌ <b>Failed to fetch stats:</b> ${e.message}`);
+          }
+          break;
+        }
+
+        case "/credits": {
+          await telegram.sendMessage("⏳ Fetching AI service status...");
+          try {
+            const notion = new NotionClient(notionToken, notionDbId);
+
+            const [doneTasks, todoTasks] = await Promise.all([
+              notion.listTasks({ status: "Done", platform: "Instagram" }),
+              notion.listTasks({ status: "Todo", platform: "Instagram" }),
+            ]);
+
+            const geminiKey = process.env.GEMINI_API_KEY;
+            const geminiStatus = geminiKey ? "✅ Configured" : "⚠️ Not Set";
+
+            // Read OpenCode usage directly via native SQLite (better-sqlite3)
+            let opencodeSection = "";
+            try {
+              const Database = (await import("better-sqlite3")).default;
+              const dbPath = `${process.env.HOME}/.local/share/opencode/opencode.db`;
+              const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+
+              // All-time totals
+              const totals = db.prepare(
+                "SELECT SUM(tokens_input) as ti, SUM(tokens_output) as to2, SUM(tokens_reasoning) as tr, SUM(cost) as cost, COUNT(*) as cnt FROM session"
+              ).get() as any;
+
+              // Today's usage (midnight UTC in ms)
+              const todayMs = new Date().setHours(0, 0, 0, 0);
+              const today = db.prepare(
+                "SELECT SUM(tokens_input) as ti, SUM(tokens_output) as to2, SUM(tokens_reasoning) as tr, COUNT(*) as cnt FROM session WHERE time_created >= ?"
+              ).get(todayMs) as any;
+
+              const topModel = db.prepare(
+                "SELECT model, COUNT(*) as cnt FROM session WHERE model IS NOT NULL GROUP BY model ORDER BY cnt DESC LIMIT 1"
+              ).get() as any;
+
+              db.close();
+
+              let modelId = "unknown";
+              try { modelId = JSON.parse(topModel?.model || "{}").id || "unknown"; } catch (_) {}
+
+              const fmtN = (n: number) => (n || 0).toLocaleString("en-IN");
+              const todayTotal = (today?.ti || 0) + (today?.to2 || 0) + (today?.tr || 0);
+              const allTimeTotal = (totals?.ti || 0) + (totals?.to2 || 0) + (totals?.tr || 0);
+
+              // Progress bar helper (10 blocks)
+              const bar = (used: number, max: number) => {
+                const pct = Math.min(used / max, 1);
+                const filled = Math.round(pct * 10);
+                return `[${"█".repeat(filled)}${"░".repeat(10 - filled)}] ${(pct * 100).toFixed(1)}%`;
+              };
+
+              opencodeSection =
+                `\n💻 <b>OpenCode (AI Coding Assistant)</b>\n` +
+                `   • Model: <code>${modelId}</code> (Free)\n` +
+                `   • Limit: Dynamic (no fixed daily cap)\n` +
+                `   📅 <b>Today</b>\n` +
+                `      ├ Sessions: <b>${today?.cnt || 0}</b>\n` +
+                `      ├ Tokens In:  <b>${fmtN(today?.ti)}</b>\n` +
+                `      ├ Tokens Out: <b>${fmtN(today?.to2)}</b>\n` +
+                `      └ Total:      <b>${fmtN(todayTotal)}</b>\n` +
+                `   📊 <b>All-Time</b>\n` +
+                `      ├ Sessions: <b>${fmtN(totals?.cnt)}</b>\n` +
+                `      └ Total Tokens: <b>${fmtN(allTimeTotal)}</b>\n` +
+                `   💰 Cost: <b>$${(totals?.cost || 0).toFixed(4)}</b>\n`;
+            } catch (err: any) {
+              opencodeSection = `\n💻 <b>OpenCode</b>: ⚠️ DB error: ${err.message}\n`;
+            }
+
+            // Gemini free-tier: 1M tokens/day, 250 req/day
+            // Track today's /aiart requests as Gemini calls (each aiart = 1 Gemini call)
+            const GEMINI_DAILY_TOKEN_LIMIT = 1_000_000;
+            const GEMINI_DAILY_REQ_LIMIT = 250;
+            const geminiReqsToday = doneTasks.filter(() => true).length + todoTasks.length; // approx
+            const geminiTokensEstimate = geminiReqsToday * 800; // ~800 tokens avg per enhance call
+            const geminiRemaining = Math.max(0, GEMINI_DAILY_TOKEN_LIMIT - geminiTokensEstimate);
+            const geminiPct = Math.min((geminiTokensEstimate / GEMINI_DAILY_TOKEN_LIMIT) * 100, 100).toFixed(1);
+
+
+
+            const fmtBig = (n: number) => n.toLocaleString("en-IN");
+            const usageBar = (used: number, max: number) => {
+              const pct = Math.min(used / max, 1);
+              const filled = Math.round(pct * 10);
+              return `${"█".repeat(filled)}${"░".repeat(10 - filled)}`;
+            };
+
+            const msg =
+              `🤖 <b>AI Credits Dashboard</b>\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+              `🧠 <b>Gemini 2.5 Flash</b> (Prompt Enhancer)\n` +
+              `   • Status: ${geminiStatus}\n` +
+              `   • Limit: 1,000,000 tokens/day · 250 req/day\n` +
+              `   📅 Today (~est.)\n` +
+              `      ├ Requests used: <b>${geminiReqsToday}</b> / 250\n` +
+              `      ├ Tokens used: <b>~${fmtBig(geminiTokensEstimate)}</b>\n` +
+              `      ├ Remaining: <b>~${fmtBig(geminiRemaining)}</b>\n` +
+              `      └ [${usageBar(geminiTokensEstimate, GEMINI_DAILY_TOKEN_LIMIT)}] ${geminiPct}%\n` +
+              `   💰 Cost: <b>$0.00</b>\n\n` +
+              `🎨 <b>Pollinations.ai FLUX</b> (Image Gen)\n` +
+              `   • Status: ✅ Active · Free (Unlimited)\n` +
+              `   • Remaining: <b>∞ Unlimited</b>\n` +
+              `   💰 Cost: <b>$0.00</b>\n\n` +
+              `☁️ <b>Catbox.moe</b> (Image Hosting)\n` +
+              `   • Status: ✅ Active · Free\n` +
+              `   • Remaining: <b>∞ Unlimited</b>\n` +
+              `   💰 Cost: <b>$0.00</b>\n` +
+
+              opencodeSection +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+              `📊 <b>Instagram Bot Stats</b>\n` +
+              `   • Total Posts Published: <b>${doneTasks.length}</b>\n` +
+              `   • Pending Tasks: <b>${todoTasks.length}</b>\n\n` +
+              `💰 <b>Total AI Spend: $0.00</b> (All free!)`;
+
+            await telegram.sendMessage(msg);
+          } catch (e: any) {
+            await telegram.sendMessage(`❌ <b>Failed to fetch credit info:</b> ${e.message}`);
+          }
+          break;
+        }
+
 
         case "/todo": {
           if (!args) {
@@ -255,20 +474,45 @@ export default async function handler(
             break;
           }
 
-          // Create the task in Notion. Set details to the prompt so the cron processor knows it's a text prompt to generate!
+          await telegram.sendMessage("🎨 Generating your AI image preview...");
+
+          let imageUrl = "";
+          const geminiApiKey = process.env.GEMINI_API_KEY;
+
+          if (geminiApiKey) {
+            try {
+              const { GeminiClient } = await import("../src/services/gemini-client.js");
+              const gemini = new GeminiClient(geminiApiKey);
+              imageUrl = await gemini.generateImage(args, { enhance: true });
+            } catch (err: any) {
+              await telegram.sendMessage(`⚠️ Gemini generation failed: ${err.message}. Falling back to default generator.`);
+            }
+          }
+
+          if (!imageUrl) {
+            const seed = Math.floor(Math.random() * 1000000);
+            imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(args)}?width=1024&height=1024&model=flux&seed=${seed}&nologo=true`;
+          }
+
+          // Create the task in Notion with the generated image URL in Details
           const page = await notion.createTask({
             name: args,
             platform: "Instagram",
             priority: "Medium",
-            details: args,
+            details: imageUrl,
           });
 
+          const shortId = page.id.replace(/-/g, "").substring(0, 8);
+
           await telegram.sendMessage(
-            `📝 <b>Instagram AI Art Task Created!</b>\n\n` +
+            `🎨 <b>AI Image Preview Generated!</b>\n\n` +
             `• <b>Prompt:</b> ${args}\n` +
-            `• <b>Status:</b> Todo (Pending Run)\n` +
-            `🔗 <a href="https://notion.so/${page.id.replace(/-/g, "")}">Open in Notion</a>\n\n` +
-            `💬 Send <code>/run</code> to generate the image and post it to Instagram!`
+            `• <b>Notion Status:</b> Todo (Pending Confirm)\n` +
+            `🔗 <a href="${imageUrl}">Click here to see the image</a>\n\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+            `👉 To publish this photo to Instagram, send:\n` +
+            `<code>/confirm_${shortId}</code>\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━`
           );
           break;
         }
