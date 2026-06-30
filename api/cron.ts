@@ -3,6 +3,7 @@ import { NotionClient } from "../src/services/notion-client.js";
 import { GitHubClient } from "../src/services/github-client.js";
 import { VSCodeClient } from "../src/services/vscode-client.js";
 import { TelegramClient } from "../src/services/telegram-client.js";
+import { InstagramClient } from "../src/services/instagram-client.js";
 import type { NotionTask, TaskExecutionResult } from "../src/types/index.js";
 
 async function executeGitHubTask(
@@ -167,6 +168,33 @@ async function executeTelegramTask(
   };
 }
 
+async function executeInstagramTask(
+  task: NotionTask,
+  instagram: InstagramClient | undefined
+): Promise<TaskExecutionResult> {
+  if (!instagram) {
+    return {
+      success: false,
+      message: "Instagram client is not configured. Set INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_USER_ID environment variables.",
+    };
+  }
+
+  const imageUrl = task.details?.trim();
+  if (!imageUrl || !imageUrl.startsWith("http")) {
+    return {
+      success: false,
+      message: "Invalid or missing image URL in Details. Expected a public HTTP/HTTPS image URL.",
+    };
+  }
+
+  const res = await instagram.publishPhoto(imageUrl, task.name);
+  return {
+    success: true,
+    message: `Post published successfully to Instagram! Media ID: ${res.mediaId}`,
+    data: res,
+  };
+}
+
 export default async function handler(
   req: VercelRequest,
   res: VercelResponse
@@ -185,6 +213,8 @@ export default async function handler(
   const githubToken = process.env.GITHUB_TOKEN;
   const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
   const telegramChatId = process.env.TELEGRAM_CHAT_ID;
+  const instagramToken = process.env.INSTAGRAM_ACCESS_TOKEN;
+  const instagramUserId = process.env.INSTAGRAM_USER_ID;
 
   if (!notionToken || !notionDbId || !githubToken) {
     return res.status(500).json({
@@ -199,6 +229,10 @@ export default async function handler(
     const telegramClient =
       telegramToken && telegramChatId
         ? new TelegramClient(telegramToken, telegramChatId)
+        : undefined;
+    const instagramClient =
+      instagramToken && instagramUserId
+        ? new InstagramClient(instagramToken, instagramUserId)
         : undefined;
 
     // 3. Find pending tasks
@@ -227,11 +261,7 @@ export default async function handler(
             };
             break;
           case "Instagram":
-            result = {
-              success: false,
-              message:
-                "Instagram task execution requires a locally running ig-mcp setup. Skipping in Vercel cloud cron.",
-            };
+            result = await executeInstagramTask(task, instagramClient);
             break;
           case "Telegram":
             result = await executeTelegramTask(task, telegramClient);

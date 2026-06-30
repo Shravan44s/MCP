@@ -10,6 +10,8 @@ import { registerGitHubTools } from "./tools/github.js";
 import { registerVSCodeTools } from "./tools/vscode.js";
 import { TelegramClient } from "./services/telegram-client.js";
 import { registerTelegramTools } from "./tools/telegram.js";
+import { InstagramClient } from "./services/instagram-client.js";
+import { registerInstagramTools } from "./tools/instagram.js";
 import { registerTaskProcessorTools } from "./engine/task-processor.js";
 import type { AppConfig } from "./types/index.js";
 
@@ -33,18 +35,24 @@ export function createServer(config: AppConfig): McpServer {
     config.telegram?.token && config.telegram?.chatId
       ? new TelegramClient(config.telegram.token, config.telegram.chatId)
       : undefined;
+  const instagramClient =
+    config.instagram?.accessToken && config.instagram?.userId
+      ? new InstagramClient(config.instagram.accessToken, config.instagram.userId)
+      : undefined;
 
   // Register all tool groups
   registerNotionTools(server, notionClient);
   registerGitHubTools(server, githubClient);
   registerVSCodeTools(server, vscodeClient);
   registerTelegramTools(server, telegramClient);
+  registerInstagramTools(server, instagramClient);
   registerTaskProcessorTools(
     server,
     notionClient,
     githubClient,
     vscodeClient,
-    telegramClient
+    telegramClient,
+    instagramClient
   );
 
   return server;

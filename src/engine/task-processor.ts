@@ -9,6 +9,7 @@ import { NotionClient } from "../services/notion-client.js";
 import { GitHubClient } from "../services/github-client.js";
 import { VSCodeClient } from "../services/vscode-client.js";
 import { TelegramClient } from "../services/telegram-client.js";
+import { InstagramClient } from "../services/instagram-client.js";
 import type { NotionTask, TaskExecutionResult } from "../types/index.js";
 
 export function registerTaskProcessorTools(
@@ -16,7 +17,8 @@ export function registerTaskProcessorTools(
   notionClient: NotionClient,
   githubClient: GitHubClient,
   vscodeClient: VSCodeClient,
-  telegramClient: TelegramClient | undefined
+  telegramClient: TelegramClient | undefined,
+  instagramClient: InstagramClient | undefined
 ) {
   // ---- process_notion_task ----
   server.tool(
@@ -55,11 +57,7 @@ export function registerTaskProcessorTools(
               result = await executeVSCodeTask(task, vscodeClient);
               break;
             case "Instagram":
-              result = {
-                success: false,
-                message:
-                  "Instagram tasks should be executed via the ig-mcp server. Use the Instagram MCP tools directly.",
-              };
+              result = await executeInstagramTask(task, instagramClient);
               break;
             case "Telegram":
               result = await executeTelegramTask(task, telegramClient);
@@ -170,10 +168,7 @@ export function registerTaskProcessorTools(
                   result = await executeVSCodeTask(task, vscodeClient);
                   break;
                 case "Instagram":
-                  result = {
-                    success: false,
-                    message: "Use ig-mcp server for Instagram tasks",
-                  };
+                  result = await executeInstagramTask(task, instagramClient);
                   break;
                 case "Telegram":
                   result = await executeTelegramTask(task, telegramClient);
@@ -449,5 +444,34 @@ async function executeTelegramTask(
   return {
     success: true,
     message: "Message sent to Telegram successfully.",
+  };
+}
+
+async function executeInstagramTask(
+  task: NotionTask,
+  instagram: InstagramClient | undefined
+): Promise<TaskExecutionResult> {
+  if (!instagram) {
+    return {
+      success: false,
+      message: "Instagram client is not configured. Set INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_USER_ID environment variables.",
+    };
+  }
+
+  // Notion task details or extra fields can provide the image URL.
+  // We can look for a URL in details or expect details to contain the image URL.
+  const imageUrl = task.details?.trim();
+  if (!imageUrl || !imageUrl.startsWith("http")) {
+    return {
+      success: false,
+      message: "Invalid or missing image URL in Details. Expected a public HTTP/HTTPS image URL.",
+    };
+  }
+
+  const res = await instagram.publishPhoto(imageUrl, task.name);
+  return {
+    success: true,
+    message: `Post published successfully to Instagram! Media ID: ${res.mediaId}`,
+    data: res,
   };
 }

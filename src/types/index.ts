@@ -86,6 +86,10 @@ export interface AppConfig {
     token?: string;
     chatId?: string;
   };
+  instagram?: {
+    accessToken?: string;
+    userId?: string;
+  };
 }
 
 /**
@@ -98,6 +102,8 @@ export function loadConfig(): AppConfig {
   const vscodeCli = process.env.VSCODE_CLI_PATH || "code";
   const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
   const telegramChatId = process.env.TELEGRAM_CHAT_ID;
+  const instagramToken = process.env.INSTAGRAM_ACCESS_TOKEN;
+  const instagramUserId = process.env.INSTAGRAM_USER_ID;
 
   if (!notionToken) {
     throw new Error("NOTION_TOKEN environment variable is required");
@@ -114,5 +120,6 @@ export function loadConfig(): AppConfig {
     github: { token: githubToken },
     vscode: { cliPath: vscodeCli },
     telegram: telegramToken && telegramChatId ? { token: telegramToken, chatId: telegramChatId } : undefined,
+    instagram: instagramToken && instagramUserId ? { accessToken: instagramToken, userId: instagramUserId } : undefined,
   };
 }
