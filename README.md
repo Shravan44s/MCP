@@ -77,6 +77,28 @@ Once you have the credentials, add them to your `opencode.jsonc` file:
 
 ---
 
+## ✈️ Connecting Telegram
+
+You can get instant notifications on your phone whenever a Notion task runs or execute custom Telegram notification tasks.
+
+### Step 1: Create a Bot
+1. Start a chat with [@BotFather](https://t.me/BotFather) on Telegram.
+2. Send `/newbot` and follow the prompts to choose a name and username.
+3. Save the **HTTP API Token** (looks like `123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ`).
+
+### Step 2: Get Your Chat ID
+1. Start a chat with [@userinfobot](https://t.me/userinfobot) on Telegram and send a message.
+2. It will reply with your `Id` (e.g. `987654321`). This is your **Chat ID**.
+
+### Step 3: Configure Environment Variables
+Add these to your local `.env` file or Vercel Environment Variables:
+- `TELEGRAM_BOT_TOKEN` — Your Bot token from Step 1
+- `TELEGRAM_CHAT_ID` — Your Chat ID from Step 2
+
+Once set, the orchestrator will automatically notify your phone whenever any task is run in the background by Vercel! You can also target `Telegram` as a **Platform** in Notion, and it will forward the Task Name/Details to your Telegram.
+
+---
+
 ## 📋 Notion Database Layout
 
 The auto-generated database contains the following columns:
