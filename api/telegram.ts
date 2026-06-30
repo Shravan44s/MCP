@@ -255,35 +255,21 @@ export default async function handler(
             break;
           }
 
-          await telegram.sendMessage(`🎨 Generating AI image & posting to Instagram...`);
-
-          const seed = Math.floor(Math.random() * 1000000);
-          const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(args)}?width=1024&height=1024&model=flux&seed=${seed}&nologo=true`;
-
-          const task = await notion.createTask({
+          // Create the task in Notion. Set details to the prompt so the cron processor knows it's a text prompt to generate!
+          const page = await notion.createTask({
             name: args,
             platform: "Instagram",
             priority: "Medium",
-            details: imageUrl,
+            details: args,
           });
-          await notion.updateTaskStatus(task.id, "In Progress");
 
-          try {
-            const res = await instagram.publishPhoto(imageUrl, args);
-            await notion.updateTaskStatus(task.id, "Done");
-            await notion.writeResult(task.id, `✅ Instagram published. Media ID: ${res.mediaId}`);
-
-            await telegram.sendMessage(
-              `🎨 <b>AI Art Generated & Posted to Instagram!</b>\n\n` +
-              `• <b>Prompt / Caption:</b> ${args}\n` +
-              `• <b>Media ID:</b> <code>${res.mediaId}</code>\n` +
-              `• <b>Image Link:</b> <a href="${imageUrl}">Open image</a>`
-            );
-          } catch (igErr: any) {
-            await notion.updateTaskStatus(task.id, "Failed");
-            await notion.writeResult(task.id, `❌ Failed: ${igErr.message}`);
-            await telegram.sendMessage(`❌ <b>Instagram publishing failed:</b> ${igErr.message}`);
-          }
+          await telegram.sendMessage(
+            `📝 <b>Instagram AI Art Task Created!</b>\n\n` +
+            `• <b>Prompt:</b> ${args}\n` +
+            `• <b>Status:</b> Todo (Pending Run)\n` +
+            `🔗 <a href="https://notion.so/${page.id.replace(/-/g, "")}">Open in Notion</a>\n\n` +
+            `💬 Send <code>/run</code> to generate the image and post it to Instagram!`
+          );
           break;
         }
 

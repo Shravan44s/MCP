@@ -179,18 +179,20 @@ async function executeInstagramTask(
     };
   }
 
-  const imageUrl = task.details?.trim();
+  let imageUrl = task.details?.trim();
+  const caption = task.name;
+
   if (!imageUrl || !imageUrl.startsWith("http")) {
-    return {
-      success: false,
-      message: "Invalid or missing image URL in Details. Expected a public HTTP/HTTPS image URL.",
-    };
+    // Details is empty or a text prompt. Generate an AI image!
+    const prompt = imageUrl || task.name;
+    const seed = Math.floor(Math.random() * 1000000);
+    imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&model=flux&seed=${seed}&nologo=true`;
   }
 
-  const res = await instagram.publishPhoto(imageUrl, task.name);
+  const res = await instagram.publishPhoto(imageUrl, caption);
   return {
     success: true,
-    message: `Post published successfully to Instagram! Media ID: ${res.mediaId}`,
+    message: `✅ Post published to Instagram!\nMedia ID: ${res.mediaId}\nImage: ${imageUrl}`,
     data: res,
   };
 }
