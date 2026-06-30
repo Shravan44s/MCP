@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/**/*.ts",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/cron",
+      "dest": "api/cron.ts"
+    },
+    {
+      "src": "/api/telegram",
+      "dest": "api/telegram.ts"
+    }
+  ]
+}

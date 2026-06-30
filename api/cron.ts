@@ -1,10 +1,10 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { NotionClient } from "../src/services/notion-client.js";
-import { GitHubClient } from "../src/services/github-client.js";
-import { VSCodeClient } from "../src/services/vscode-client.js";
-import { TelegramClient } from "../src/services/telegram-client.js";
-import { InstagramClient } from "../src/services/instagram-client.js";
-import type { NotionTask, TaskExecutionResult } from "../src/types/index.js";
+import { NotionClient } from "../dist/services/notion-client.js";
+import { GitHubClient } from "../dist/services/github-client.js";
+import { VSCodeClient } from "../dist/services/vscode-client.js";
+import { TelegramClient } from "../dist/services/telegram-client.js";
+import { InstagramClient } from "../dist/services/instagram-client.js";
+import type { NotionTask, TaskExecutionResult } from "../dist/types/index.js";
 
 async function executeGitHubTask(
   task: NotionTask,

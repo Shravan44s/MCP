@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "description": "MCP server that connects Notion to GitHub, Instagram, and VS Code for automated task execution",
   "type": "module",
-  "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
