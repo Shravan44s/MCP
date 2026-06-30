@@ -1,8 +1,8 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { NotionClient } from "../dist/services/notion-client.js";
-import { GitHubClient } from "../dist/services/github-client.js";
-import { InstagramClient } from "../dist/services/instagram-client.js";
-import { TelegramClient } from "../dist/services/telegram-client.js";
+import { NotionClient } from "../src/services/notion-client.js";
+import { GitHubClient } from "../src/services/github-client.js";
+import { InstagramClient } from "../src/services/instagram-client.js";
+import { TelegramClient } from "../src/services/telegram-client.js";
 
 // Basic HTML styling for Telegram messages
 const HELP_MESSAGE = `
