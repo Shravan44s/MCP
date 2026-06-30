@@ -435,31 +435,27 @@ export default async function handler(
             break;
           }
 
-          await telegram.sendMessage("⏳ Uploading and publishing photo to Instagram...");
+          // Always require confirmation before posting — never post directly
+          await telegram.sendMessage("⏳ Creating Instagram task for review...");
 
-          const task = await notion.createTask({
+          const postTask = await notion.createTask({
             name: caption || "Instagram Post",
             platform: "Instagram",
             priority: "Medium",
             details: imageUrl,
           });
-          await notion.updateTaskStatus(task.id, "In Progress");
 
-          try {
-            const res = await instagram.publishPhoto(imageUrl, caption || "");
-            await notion.updateTaskStatus(task.id, "Done");
-            await notion.writeResult(task.id, `✅ Instagram published. Media ID: ${res.mediaId}`);
+          const postShortId = postTask.id.replace(/-/g, "").substring(0, 8);
 
-            await telegram.sendMessage(
-              `📸 <b>Instagram Post Published!</b>\n\n` +
-              `• <b>Caption:</b> ${caption || "None"}\n` +
-              `• <b>Media ID:</b> <code>${res.mediaId}</code>`
-            );
-          } catch (igErr: any) {
-            await notion.updateTaskStatus(task.id, "Failed");
-            await notion.writeResult(task.id, `❌ Failed: ${igErr.message}`);
-            await telegram.sendMessage(`❌ <b>Instagram publishing failed:</b> ${igErr.message}`);
-          }
+          await telegram.sendMessage(
+            `📸 <b>Instagram Post Ready for Review!</b>\n\n` +
+            `• <b>Caption:</b> ${caption || "None"}\n` +
+            `• <b>Image:</b> <a href="${imageUrl}">Click to preview</a>\n\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+            `👉 To publish to Instagram, send:\n` +
+            `<code>/confirm_${postShortId}</code>\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+          );
           break;
         }
 
@@ -552,19 +548,85 @@ export default async function handler(
           await telegram.sendMessage("❓ Unknown command. Type <code>/help</code> to see available commands.");
       }
     } else {
-      // 2. Normal text message (no slash command) -> Add as a General task in Notion
-      const page = await notion.createTask({
-        name: text,
-        platform: "General",
-        priority: "Medium",
-        details: "Added via conversational Telegram message.",
-      });
+      // 2. Natural language message — detect Instagram/AI art intent
+      const lower = text.toLowerCase();
+      const isInstagramIntent =
+        lower.includes("instagram") ||
+        lower.includes("post to ig") ||
+        lower.includes("ig post") ||
+        lower.includes("insta");
+      const isAIArtIntent =
+        lower.includes("create image") ||
+        lower.includes("generate image") ||
+        lower.includes("make image") ||
+        lower.includes("draw") ||
+        lower.includes("ai art") ||
+        lower.includes("ai image");
 
-      await telegram.sendMessage(
-        `📝 <b>Added to Notion Inbox</b>\n\n` +
-        `• <b>Task:</b> ${text}\n` +
-        `🔗 <a href="https://notion.so/${page.id.replace(/-/g, "")}">Open in Notion</a>`
-      );
+      if (isInstagramIntent || isAIArtIntent) {
+        // Strip common trigger phrases to get the actual prompt
+        const prompt = text
+          .replace(/post (this |it |image )?to instagram/gi, "")
+          .replace(/create (an? )?image (and )?post (to )?(instagram|ig|insta)?/gi, "")
+          .replace(/generate (an? )?image (and )?post (to )?(instagram|ig|insta)?/gi, "")
+          .replace(/make (an? )?image (and )?post (to )?(instagram|ig|insta)?/gi, "")
+          .replace(/post (to )?(instagram|ig|insta)/gi, "")
+          .replace(/(instagram|insta|ig) post/gi, "")
+          .replace(/ai art/gi, "")
+          .replace(/ai image/gi, "")
+          .trim() || text;
+
+        await telegram.sendMessage("🎨 Detected Instagram intent! Generating AI image preview...");
+
+        let aiImageUrl = "";
+        const geminiApiKey = process.env.GEMINI_API_KEY;
+        if (geminiApiKey) {
+          try {
+            const { GeminiClient } = await import("../src/services/gemini-client.js");
+            const gemini = new GeminiClient(geminiApiKey);
+            aiImageUrl = await gemini.generateImage(prompt, { enhance: true });
+          } catch (_) {}
+        }
+        if (!aiImageUrl) {
+          const seed = Math.floor(Math.random() * 1000000);
+          aiImageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&model=flux&seed=${seed}&nologo=true`;
+        }
+
+        const igPage = await notion.createTask({
+          name: prompt,
+          platform: "Instagram",
+          priority: "Medium",
+          details: aiImageUrl,
+        });
+
+        const igShortId = igPage.id.replace(/-/g, "").substring(0, 8);
+
+        await telegram.sendMessage(
+          `🎨 <b>AI Image Preview Ready!</b>\n\n` +
+          `• <b>Prompt:</b> ${prompt}\n` +
+          `• <b>Platform:</b> Instagram\n` +
+          `• <b>Status:</b> Pending Confirm\n` +
+          `🔗 <a href="${aiImageUrl}">Click to preview image</a>\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `👉 Happy with it? Send to publish:\n` +
+          `<code>/confirm_${igShortId}</code>\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+        );
+      } else {
+        // Generic task — save to Notion as General
+        const page = await notion.createTask({
+          name: text,
+          platform: "General",
+          priority: "Medium",
+          details: "Added via conversational Telegram message.",
+        });
+
+        await telegram.sendMessage(
+          `📝 <b>Added to Notion Inbox</b>\n\n` +
+          `• <b>Task:</b> ${text}\n` +
+          `🔗 <a href="https://notion.so/${page.id.replace(/-/g, "")}">Open in Notion</a>`
+        );
+      }
     }
 
     return res.status(200).json({ status: "success" });
