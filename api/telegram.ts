@@ -98,7 +98,6 @@ export default async function handler(
           const page = await notion.createTask({
             name: args,
             platform: "General",
-            status: "Todo",
             priority: "Medium",
             details: "Added via Telegram Bot chat.",
           });
@@ -124,11 +123,11 @@ export default async function handler(
           const task = await notion.createTask({
             name: `Create repository: ${args}`,
             platform: "GitHub",
-            status: "In Progress",
             priority: "High",
             githubRepo: args,
             githubAction: "Create Repo",
           });
+          await notion.updateTaskStatus(task.id, "In Progress");
 
           try {
             const repo = await github.createRepo({ name: args });
@@ -150,7 +149,7 @@ export default async function handler(
 
         case "/issue": {
           // Format: /issue Title | owner/repo | Body
-          const parts = args.split("|").map(p => p.trim());
+          const parts = args.split("|").map((p: string) => p.trim());
           const [title, repoPath, body] = parts;
 
           if (!title || !repoPath) {
@@ -171,12 +170,12 @@ export default async function handler(
           const task = await notion.createTask({
             name: title,
             platform: "GitHub",
-            status: "In Progress",
             priority: "Medium",
             githubRepo: repoPath,
             githubAction: "Create Issue",
             details: body || "",
           });
+          await notion.updateTaskStatus(task.id, "In Progress");
 
           try {
             const issue = await github.createIssue({
@@ -207,7 +206,7 @@ export default async function handler(
             break;
           }
 
-          const parts = args.split("|").map(p => p.trim());
+          const parts = args.split("|").map((p: string) => p.trim());
           const [imageUrl, caption] = parts;
 
           if (!imageUrl || !imageUrl.startsWith("http")) {
@@ -222,10 +221,10 @@ export default async function handler(
           const task = await notion.createTask({
             name: caption || "Instagram Post",
             platform: "Instagram",
-            status: "In Progress",
             priority: "Medium",
             details: imageUrl,
           });
+          await notion.updateTaskStatus(task.id, "In Progress");
 
           try {
             const res = await instagram.publishPhoto(imageUrl, caption || "");
@@ -264,10 +263,10 @@ export default async function handler(
           const task = await notion.createTask({
             name: args,
             platform: "Instagram",
-            status: "In Progress",
             priority: "Medium",
             details: imageUrl,
           });
+          await notion.updateTaskStatus(task.id, "In Progress");
 
           try {
             const res = await instagram.publishPhoto(imageUrl, args);
@@ -327,7 +326,6 @@ export default async function handler(
       const page = await notion.createTask({
         name: text,
         platform: "General",
-        status: "Todo",
         priority: "Medium",
         details: "Added via conversational Telegram message.",
       });
