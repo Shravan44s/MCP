@@ -28,6 +28,9 @@ Manage your automated workspace directly from chat!
 🤖 <b>AI Usage</b>
 • <code>/credits</code> - View AI service usage & credit status
 
+📧 <b>Reports</b>
+• <code>/email</code> - Send full dashboard report to your email (charts included!)
+
 <i>Or just type a message, and it will be added as a general task to your Notion database!</i>
 `;
 
@@ -47,6 +50,9 @@ export default async function handler(
   const githubToken = process.env.GITHUB_TOKEN;
   const instagramToken = process.env.INSTAGRAM_ACCESS_TOKEN;
   const instagramUserId = process.env.INSTAGRAM_USER_ID;
+  const gmailUser = process.env.GMAIL_USER;
+  const gmailAppPassword = process.env.GMAIL_APP_PASSWORD;
+  const emailTo = process.env.EMAIL_TO;
 
   if (!token || !chatId || !notionToken || !notionDbId || !githubToken) {
     return res.status(500).json({ error: "Missing required server credentials" });
@@ -131,6 +137,120 @@ export default async function handler(
         case "/start":
         case "/help": {
           await telegram.sendMessage(HELP_MESSAGE);
+          break;
+        }
+
+        case "/email": {
+          if (!gmailUser || !gmailAppPassword || !emailTo) {
+            await telegram.sendMessage(
+              `❌ <b>Email not configured.</b> Add these to your <code>.env</code>:\n\n` +
+              `<code>GMAIL_USER=you@gmail.com</code>\n` +
+              `<code>GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx</code>\n` +
+              `<code>EMAIL_TO=recipient@email.com</code>\n\n` +
+              `<a href="https://myaccount.google.com/apppasswords">Generate Gmail App Password →</a>`
+            );
+            break;
+          }
+
+          await telegram.sendMessage("⏳ Building your dashboard report... This may take ~10 seconds.");
+
+          try {
+            const { sendDashboardEmail } = await import("../src/services/email-client.js");
+            const notionSvc = new NotionClient(notionToken, notionDbId);
+
+            // Gather all data in parallel
+            const [todoTasks, inProgressTasks, doneTasks, failedTasks] = await Promise.all([
+              notionSvc.listTasks({ status: "Todo" }),
+              notionSvc.listTasks({ status: "In Progress" }),
+              notionSvc.listTasks({ status: "Done" }),
+              notionSvc.listTasks({ status: "Failed" }),
+            ]);
+
+            const allTasks = [...doneTasks, ...inProgressTasks, ...todoTasks, ...failedTasks];
+            const recentTasks = allTasks.slice(0, 8).map(t => ({
+              name: t.name,
+              platform: t.platform,
+              status: t.status,
+            }));
+
+            // Instagram stats
+            let igData: any = undefined;
+            if (instagram) {
+              try {
+                const [stats, insights, media] = await Promise.all([
+                  instagram.getAccountStats(),
+                  instagram.getInsights().catch(() => ({ impressions: 0, reach: 0, profileViews: 0 })),
+                  instagram.getRecentMedia(5).catch(() => []),
+                ]);
+                igData = {
+                  username: stats.username,
+                  followers: stats.followers,
+                  following: stats.following,
+                  mediaCount: stats.mediaCount,
+                  impressions: insights.impressions,
+                  reach: insights.reach,
+                  profileViews: insights.profileViews,
+                  recentMedia: media.map(m => ({
+                    caption: m.caption,
+                    likes: m.likes,
+                    comments: m.comments,
+                    timestamp: m.timestamp,
+                  })),
+                };
+              } catch (_) {}
+            }
+
+            // OpenCode stats from SQLite
+            let opencodeTokensTotal = 0;
+            let opencodeSessions = 0;
+            let opencodeModel = "deepseek-v4-flash-free";
+            try {
+              const Database = (await import("better-sqlite3")).default;
+              const dbPath = `${process.env.HOME}/.local/share/opencode/opencode.db`;
+              const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+              const totals = db.prepare("SELECT SUM(tokens_input) as ti, SUM(tokens_output) as to2, SUM(tokens_reasoning) as tr, COUNT(*) as cnt FROM session").get() as any;
+              const topModel = db.prepare("SELECT model FROM session WHERE model IS NOT NULL GROUP BY model ORDER BY COUNT(*) DESC LIMIT 1").get() as any;
+              db.close();
+              opencodeTokensTotal = (totals?.ti || 0) + (totals?.to2 || 0) + (totals?.tr || 0);
+              opencodeSessions = totals?.cnt || 0;
+              try { opencodeModel = JSON.parse(topModel?.model || "{}").id || opencodeModel; } catch (_) {}
+            } catch (_) {}
+
+            const geminiReqsToday = doneTasks.filter(t => t.platform === "Instagram").length + todoTasks.filter(t => t.platform === "Instagram").length;
+            const geminiTokensUsed = geminiReqsToday * 800;
+            const geminiRemaining = Math.max(0, 1_000_000 - geminiTokensUsed);
+
+            await sendDashboardEmail(emailTo, {
+              instagram: igData,
+              notion: {
+                todo: todoTasks.length,
+                inProgress: inProgressTasks.length,
+                done: doneTasks.length,
+                failed: failedTasks.length,
+                recentTasks,
+              },
+              credits: {
+                geminiReqsToday,
+                geminiTokensUsed,
+                geminiRemaining,
+                opencodeTokensTotal,
+                opencodeSessions,
+                opencodeModel,
+              },
+            }, gmailUser, gmailAppPassword);
+
+            await telegram.sendMessage(
+              `📧 <b>Dashboard Report Sent!</b>\n\n` +
+              `✅ Email delivered to <code>${emailTo}</code>\n\n` +
+              `📊 Report includes:\n` +
+              `  • Instagram analytics + bar chart\n` +
+              `  • Notion tasks breakdown + pie chart\n` +
+              `  • AI credits & usage (Gemini, OpenCode)\n` +
+              `  • Recent ${recentTasks.length} tasks list`
+            );
+          } catch (emailErr: any) {
+            await telegram.sendMessage(`❌ <b>Failed to send email:</b> ${emailErr.message}`);
+          }
           break;
         }
 

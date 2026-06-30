@@ -21,8 +21,10 @@
     "@notionhq/client": "^2.3.0",
     "@octokit/rest": "^21.1.1",
     "@types/better-sqlite3": "^7.6.13",
+    "@types/nodemailer": "^8.0.1",
     "better-sqlite3": "^12.11.1",
     "dotenv": "^16.4.7",
+    "nodemailer": "^9.0.3",
     "zod": "^3.24.4"
   },
   "devDependencies": {
