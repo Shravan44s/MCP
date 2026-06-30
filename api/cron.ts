@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { NotionClient } from "../src/services/notion-client.js";
 import { GitHubClient } from "../src/services/github-client.js";
 import { VSCodeClient } from "../src/services/vscode-client.js";
+import { TelegramClient } from "../src/services/telegram-client.js";
 import type { NotionTask, TaskExecutionResult } from "../src/types/index.js";
 
 async function executeGitHubTask(
@@ -143,6 +144,29 @@ async function executeGitHubTask(
   }
 }
 
+async function executeTelegramTask(
+  task: NotionTask,
+  telegram: TelegramClient | undefined
+): Promise<TaskExecutionResult> {
+  if (!telegram) {
+    return {
+      success: false,
+      message: "Telegram client is not configured. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID environment variables.",
+    };
+  }
+
+  const messageText = task.details
+    ? `<b>${task.name}</b>\n\n${task.details}`
+    : task.name;
+
+  await telegram.sendMessage(messageText);
+
+  return {
+    success: true,
+    message: "Message sent to Telegram successfully.",
+  };
+}
+
 export default async function handler(
   req: VercelRequest,
   res: VercelResponse
@@ -159,6 +183,8 @@ export default async function handler(
   const notionToken = process.env.NOTION_TOKEN;
   const notionDbId = process.env.NOTION_DATABASE_ID;
   const githubToken = process.env.GITHUB_TOKEN;
+  const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
+  const telegramChatId = process.env.TELEGRAM_CHAT_ID;
 
   if (!notionToken || !notionDbId || !githubToken) {
     return res.status(500).json({
@@ -170,6 +196,10 @@ export default async function handler(
     const notionClient = new NotionClient(notionToken, notionDbId);
     const githubClient = new GitHubClient(githubToken);
     const vscodeClient = new VSCodeClient("code");
+    const telegramClient =
+      telegramToken && telegramChatId
+        ? new TelegramClient(telegramToken, telegramChatId)
+        : undefined;
 
     // 3. Find pending tasks
     const tasks = await notionClient.listTasks({ status: "Todo" });
@@ -203,6 +233,9 @@ export default async function handler(
                 "Instagram task execution requires a locally running ig-mcp setup. Skipping in Vercel cloud cron.",
             };
             break;
+          case "Telegram":
+            result = await executeTelegramTask(task, telegramClient);
+            break;
           default:
             result = {
               success: true,
@@ -221,6 +254,22 @@ export default async function handler(
         task.id,
         result.success ? `✅ ${result.message}` : `❌ ${result.message}`
       );
+
+      // Send a telegram notification alert if configured
+      if (telegramClient) {
+        try {
+          await telegramClient.sendMessage(
+            `🔔 <b>Notion Task Executed (Vercel Cron)</b>\n\n` +
+            `<b>Task:</b> ${task.name}\n` +
+            `<b>Platform:</b> ${task.platform}\n` +
+            `<b>Status:</b> ${result.success ? "✅ Success" : "❌ Failed"}\n` +
+            `<b>Result:</b> ${result.message}`
+          );
+        } catch (telErr) {
+          console.error("Telegram notification failed", telErr);
+        }
+      }
+
       summary.push(
         `[${task.platform}] "${task.name}": ${
           result.success ? "Success" : "Failed"

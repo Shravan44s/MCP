@@ -3,7 +3,7 @@
 // ============================================
 
 /** The platforms a Notion task can target */
-export type Platform = "GitHub" | "Instagram" | "VSCode" | "General";
+export type Platform = "GitHub" | "Instagram" | "VSCode" | "Telegram" | "General";
 
 /** Task status in the Notion database */
 export type TaskStatus = "Todo" | "In Progress" | "Done" | "Failed";
@@ -82,6 +82,10 @@ export interface AppConfig {
   vscode: {
     cliPath: string;
   };
+  telegram?: {
+    token?: string;
+    chatId?: string;
+  };
 }
 
 /**
@@ -92,6 +96,8 @@ export function loadConfig(): AppConfig {
   const notionDbId = process.env.NOTION_DATABASE_ID;
   const githubToken = process.env.GITHUB_TOKEN;
   const vscodeCli = process.env.VSCODE_CLI_PATH || "code";
+  const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
+  const telegramChatId = process.env.TELEGRAM_CHAT_ID;
 
   if (!notionToken) {
     throw new Error("NOTION_TOKEN environment variable is required");
@@ -107,5 +113,6 @@ export function loadConfig(): AppConfig {
     notion: { token: notionToken, databaseId: notionDbId },
     github: { token: githubToken },
     vscode: { cliPath: vscodeCli },
+    telegram: telegramToken && telegramChatId ? { token: telegramToken, chatId: telegramChatId } : undefined,
   };
 }

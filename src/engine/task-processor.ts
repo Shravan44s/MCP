@@ -8,13 +8,15 @@ import { z } from "zod";
 import { NotionClient } from "../services/notion-client.js";
 import { GitHubClient } from "../services/github-client.js";
 import { VSCodeClient } from "../services/vscode-client.js";
+import { TelegramClient } from "../services/telegram-client.js";
 import type { NotionTask, TaskExecutionResult } from "../types/index.js";
 
 export function registerTaskProcessorTools(
   server: McpServer,
   notionClient: NotionClient,
   githubClient: GitHubClient,
-  vscodeClient: VSCodeClient
+  vscodeClient: VSCodeClient,
+  telegramClient: TelegramClient | undefined
 ) {
   // ---- process_notion_task ----
   server.tool(
@@ -59,6 +61,9 @@ export function registerTaskProcessorTools(
                   "Instagram tasks should be executed via the ig-mcp server. Use the Instagram MCP tools directly.",
               };
               break;
+            case "Telegram":
+              result = await executeTelegramTask(task, telegramClient);
+              break;
             default:
               result = {
                 success: true,
@@ -83,6 +88,21 @@ export function registerTaskProcessorTools(
             ? `✅ ${result.message}`
             : `❌ ${result.message}`
         );
+
+        // Send a telegram notification alert if configured
+        if (telegramClient) {
+          try {
+            await telegramClient.sendMessage(
+              `🔔 <b>Notion Task Executed</b>\n\n` +
+              `<b>Task:</b> ${task.name}\n` +
+              `<b>Platform:</b> ${task.platform}\n` +
+              `<b>Status:</b> ${result.success ? "✅ Done" : "❌ Failed"}\n` +
+              `<b>Result:</b> ${result.message}`
+            );
+          } catch (telErr) {
+            console.error("Telegram notification failed", telErr);
+          }
+        }
 
         return {
           content: [
@@ -155,6 +175,9 @@ export function registerTaskProcessorTools(
                     message: "Use ig-mcp server for Instagram tasks",
                   };
                   break;
+                case "Telegram":
+                  result = await executeTelegramTask(task, telegramClient);
+                  break;
                 default:
                   result = {
                     success: true,
@@ -178,6 +201,21 @@ export function registerTaskProcessorTools(
                 ? `✅ ${result.message}`
                 : `❌ ${result.message}`
             );
+
+            // Send a telegram notification alert if configured
+            if (telegramClient) {
+              try {
+                await telegramClient.sendMessage(
+                  `🔔 <b>Notion Task Executed (Batch)</b>\n\n` +
+                  `<b>Task:</b> ${task.name}\n` +
+                  `<b>Platform:</b> ${task.platform}\n` +
+                  `<b>Status:</b> ${result.success ? "✅ Done" : "❌ Failed"}\n` +
+                  `<b>Result:</b> ${result.message}`
+                );
+              } catch (telErr) {
+                console.error("Telegram notification failed", telErr);
+              }
+            }
 
             results.push(
               `${result.success ? "✅" : "❌"} "${task.name}": ${result.message}`
@@ -388,5 +426,28 @@ async function executeVSCodeTask(
     success: false,
     message:
       'No VSCode action configured. Set "VSCode Command" or "VSCode Project Path" in Notion.',
+  };
+}
+
+async function executeTelegramTask(
+  task: NotionTask,
+  telegram: TelegramClient | undefined
+): Promise<TaskExecutionResult> {
+  if (!telegram) {
+    return {
+      success: false,
+      message: "Telegram client is not configured. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID environment variables.",
+    };
+  }
+
+  const messageText = task.details
+    ? `<b>${task.name}</b>\n\n${task.details}`
+    : task.name;
+
+  await telegram.sendMessage(messageText);
+
+  return {
+    success: true,
+    message: "Message sent to Telegram successfully.",
   };
 }

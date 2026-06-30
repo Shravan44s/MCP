@@ -8,6 +8,8 @@ import { VSCodeClient } from "./services/vscode-client.js";
 import { registerNotionTools } from "./tools/notion.js";
 import { registerGitHubTools } from "./tools/github.js";
 import { registerVSCodeTools } from "./tools/vscode.js";
+import { TelegramClient } from "./services/telegram-client.js";
+import { registerTelegramTools } from "./tools/telegram.js";
 import { registerTaskProcessorTools } from "./engine/task-processor.js";
 import type { AppConfig } from "./types/index.js";
 
@@ -27,12 +29,23 @@ export function createServer(config: AppConfig): McpServer {
   );
   const githubClient = new GitHubClient(config.github.token);
   const vscodeClient = new VSCodeClient(config.vscode.cliPath);
+  const telegramClient =
+    config.telegram?.token && config.telegram?.chatId
+      ? new TelegramClient(config.telegram.token, config.telegram.chatId)
+      : undefined;
 
   // Register all tool groups
   registerNotionTools(server, notionClient);
   registerGitHubTools(server, githubClient);
   registerVSCodeTools(server, vscodeClient);
-  registerTaskProcessorTools(server, notionClient, githubClient, vscodeClient);
+  registerTelegramTools(server, telegramClient);
+  registerTaskProcessorTools(
+    server,
+    notionClient,
+    githubClient,
+    vscodeClient,
+    telegramClient
+  );
 
   return server;
 }
