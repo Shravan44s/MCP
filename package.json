@@ -1,0 +1,27 @@
+{
+  "name": "notion-task-orchestrator",
+  "version": "1.0.0",
+  "description": "MCP server that connects Notion to GitHub, Instagram, and VS Code for automated task execution",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts"
+  },
+  "keywords": ["mcp", "notion", "github", "vscode", "automation"],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@notionhq/client": "^2.3.0",
+    "@octokit/rest": "^21.1.1",
+    "dotenv": "^16.4.7",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@vercel/node": "^3.2.25",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}
