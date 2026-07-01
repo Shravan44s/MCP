@@ -95,6 +95,101 @@ export class InstagramClient {
   }
 
   /**
+   * Publish a Reel (video) to Instagram (3-step flow: create, poll status, publish)
+   */
+  async publishReel(
+    videoUrl: string,
+    caption?: string
+  ): Promise<{ success: boolean; mediaId: string }> {
+    if (!this.accessToken || !this.userId) {
+      throw new Error("Instagram access token or User ID is missing");
+    }
+
+    // Step 1: Create reels container
+    const containerUrl = `${this.baseUrl}/${this.userId}/media`;
+    const containerRes = await fetch(containerUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        media_type: "REELS",
+        video_url: videoUrl,
+        caption: caption || "",
+        share_to_feed: true,
+        access_token: this.accessToken,
+      }),
+    });
+
+    const containerData: any = await containerRes.json();
+    if (!containerRes.ok || !containerData.id) {
+      throw new Error(
+        containerData.error?.message ||
+          "Failed to create Instagram Reels container"
+      );
+    }
+
+    const creationId = containerData.id;
+
+    // Step 2: Poll status of the container until finished
+    console.log(`📡 Reels container created: ${creationId}. Polling status...`);
+    const statusUrl = `${this.baseUrl}/${creationId}?fields=status_code,status&access_token=${this.accessToken}`;
+    
+    let isFinished = false;
+    let attempts = 0;
+    const maxAttempts = 30; // Max 5 minutes (30 * 10 seconds)
+
+    while (!isFinished && attempts < maxAttempts) {
+      attempts++;
+      await new Promise((r) => setTimeout(r, 10000)); // Wait 10s between checks
+
+      const statusRes = await fetch(statusUrl);
+      const statusData: any = await statusRes.json();
+
+      if (!statusRes.ok) {
+        throw new Error(
+          statusData.error?.message || "Failed to poll Reels container status"
+        );
+      }
+
+      console.log(`   └ Attempt ${attempts}/${maxAttempts}: status_code=${statusData.status_code}`);
+
+      if (statusData.status_code === "FINISHED") {
+        isFinished = true;
+      } else if (statusData.status_code === "ERROR") {
+        throw new Error(`Reels processing failed: ${statusData.error || "unknown error"}`);
+      }
+    }
+
+    if (!isFinished) {
+      throw new Error("Reels processing timed out on Meta servers.");
+    }
+
+    // Step 3: Publish the container
+    const publishUrl = `${this.baseUrl}/${this.userId}/media_publish`;
+    const publishRes = await fetch(publishUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        creation_id: creationId,
+        access_token: this.accessToken,
+      }),
+    });
+
+    const publishData: any = await publishRes.json();
+    if (!publishRes.ok || !publishData.id) {
+      throw new Error(
+        publishData.error?.message ||
+          "Failed to publish Instagram Reels container"
+      );
+    }
+
+    return {
+      success: true,
+      mediaId: publishData.id,
+    };
+  }
+
+
+  /**
    * Fetch account stats: followers, following, media count, bio
    */
   async getAccountStats(): Promise<InstagramAccountStats> {

@@ -23,6 +23,7 @@ Manage your automated workspace directly from chat!
 📸 <b>Instagram</b>
 • <code>/post [Image URL] | [Caption]</code> - Post an image to Instagram
 • <code>/aiart [Post Caption]</code> - Generate AI art, review, then confirm to post
+• <code>/reel [Video Prompt]</code> - Generate an animated video Reel, review, then confirm to post
 • <code>/igstats</code> - 📊 Instagram analytics dashboard
 
 🤖 <b>AI Usage</b>
@@ -98,7 +99,7 @@ export default async function handler(
 
         try {
           const tasks = await notion.listTasks({ status: "Todo" });
-          const task = tasks.find((t) => t.id.replace(/-/g, "").startsWith(shortId));
+          const task = tasks.find((t) => t.id.replace(/-/g, "").endsWith(shortId));
 
           if (!task) {
             await telegram.sendMessage("❌ Pending task not found or already processed.");
@@ -117,7 +118,15 @@ export default async function handler(
           }
 
           await notion.updateTaskStatus(task.id, "In Progress");
-          const publishRes = await instagram.publishPhoto(imageUrl, task.name);
+          
+          let publishRes;
+          if (imageUrl.endsWith(".mp4") || imageUrl.includes(".mp4")) {
+            await telegram.sendMessage("🎬 Processing and rendering video Reel on Instagram servers (this takes ~1-2 mins)...");
+            publishRes = await instagram.publishReel(imageUrl, task.name);
+          } else {
+            publishRes = await instagram.publishPhoto(imageUrl, task.name);
+          }
+          
           await notion.updateTaskStatus(task.id, "Done");
           await notion.writeResult(task.id, `✅ Published to Instagram. Media ID: ${publishRes.mediaId}`);
 
@@ -565,7 +574,7 @@ export default async function handler(
             details: imageUrl,
           });
 
-          const postShortId = postTask.id.replace(/-/g, "").substring(0, 8);
+          const postShortId = postTask.id.replace(/-/g, "").slice(-8);
 
           await telegram.sendMessage(
             `📸 <b>Instagram Post Ready for Review!</b>\n\n` +
@@ -618,7 +627,7 @@ export default async function handler(
             details: imageUrl,
           });
 
-          const shortId = page.id.replace(/-/g, "").substring(0, 8);
+          const shortId = page.id.replace(/-/g, "").slice(-8);
 
           await telegram.sendMessage(
             `🎨 <b>AI Image Preview Generated!</b>\n\n` +
@@ -630,6 +639,49 @@ export default async function handler(
             `<code>/confirm_${shortId}</code>\n` +
             `━━━━━━━━━━━━━━━━━━━━━━━━━━`
           );
+          break;
+        }
+
+        case "/reel": {
+          if (!instagram) {
+            await telegram.sendMessage("❌ Instagram client is not configured on this server.");
+            break;
+          }
+
+          if (!args) {
+            await telegram.sendMessage("❌ Please provide a prompt. Format: <code>/reel A cool cyberpunk city</code>");
+            break;
+          }
+
+          await telegram.sendMessage("🎬 Generating and compiling your animated Reel video (takes ~30-45s)...");
+
+          try {
+            const { VideoGenerator } = await import("../src/services/video-generator.js");
+            const generator = new VideoGenerator(process.env.GEMINI_API_KEY);
+            const videoUrl = await generator.generateVideo(args);
+
+            const page = await notion.createTask({
+              name: args,
+              platform: "Instagram",
+              priority: "Medium",
+              details: videoUrl,
+            });
+
+            const shortId = page.id.replace(/-/g, "").slice(-8);
+
+            await telegram.sendMessage(
+              `🎬 <b>AI Reel Video Generated!</b>\n\n` +
+              `• <b>Prompt:</b> ${args}\n` +
+              `• <b>Notion Status:</b> Todo (Pending Confirm)\n` +
+              `🔗 <a href="${videoUrl}">Click here to view the video Reel</a>\n\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+              `👉 To publish this Reel to Instagram, send:\n` +
+              `<code>/confirm_${shortId}</code>\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+            );
+          } catch (err: any) {
+            await telegram.sendMessage(`❌ <b>Video generation failed:</b> ${err.message}`);
+          }
           break;
         }
 
@@ -682,8 +734,59 @@ export default async function handler(
         lower.includes("draw") ||
         lower.includes("ai art") ||
         lower.includes("ai image");
+      const isReelIntent =
+        lower.includes("reel") ||
+        lower.includes("video") ||
+        lower.includes("reels") ||
+        lower.includes("movie") ||
+        lower.includes("animation") ||
+        lower.includes("animate");
 
-      if (isInstagramIntent || isAIArtIntent) {
+      if (isReelIntent || (isInstagramIntent && (lower.includes("video") || lower.includes("reel")))) {
+        // Strip common trigger phrases for reels
+        const prompt = text
+          .replace(/post (this |it |video )?to instagram/gi, "")
+          .replace(/create (an? )?(animated |reels? )?video (and )?post (to )?(instagram|ig|insta)?/gi, "")
+          .replace(/generate (an? )?(animated |reels? )?video (and )?post (to )?(instagram|ig|insta)?/gi, "")
+          .replace(/make (an? )?(animated |reels? )?video (and )?post (to )?(instagram|ig|insta)?/gi, "")
+          .replace(/post (to )?(instagram|ig|insta)/gi, "")
+          .replace(/(instagram|insta|ig) (reels?|video)/gi, "")
+          .replace(/animated video/gi, "")
+          .replace(/reels?/gi, "")
+          .replace(/video/gi, "")
+          .trim() || text;
+
+        await telegram.sendMessage("🎬 Detected Reels intent! Generating animated video preview (takes ~30-45s)...");
+
+        try {
+          const { VideoGenerator } = await import("../src/services/video-generator.js");
+          const generator = new VideoGenerator(process.env.GEMINI_API_KEY);
+          const videoUrl = await generator.generateVideo(prompt);
+
+          const igPage = await notion.createTask({
+            name: prompt,
+            platform: "Instagram",
+            priority: "Medium",
+            details: videoUrl,
+          });
+
+          const igShortId = igPage.id.replace(/-/g, "").slice(-8);
+
+          await telegram.sendMessage(
+            `🎬 <b>AI Reel Video Ready!</b>\n\n` +
+            `• <b>Prompt:</b> ${prompt}\n` +
+            `• <b>Platform:</b> Instagram Reels\n` +
+            `• <b>Status:</b> Pending Confirm\n` +
+            `🔗 <a href="${videoUrl}">Click to preview video Reel</a>\n\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+            `👉 Happy with it? Send to publish:\n` +
+            `<code>/confirm_${igShortId}</code>\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+          );
+        } catch (err: any) {
+          await telegram.sendMessage(`❌ <b>Video generation failed:</b> ${err.message}`);
+        }
+      } else if (isInstagramIntent || isAIArtIntent) {
         // Strip common trigger phrases to get the actual prompt
         const prompt = text
           .replace(/post (this |it |image )?to instagram/gi, "")
@@ -719,7 +822,7 @@ export default async function handler(
           details: aiImageUrl,
         });
 
-        const igShortId = igPage.id.replace(/-/g, "").substring(0, 8);
+        const igShortId = igPage.id.replace(/-/g, "").slice(-8);
 
         await telegram.sendMessage(
           `🎨 <b>AI Image Preview Ready!</b>\n\n` +
