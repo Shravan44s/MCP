@@ -104,8 +104,9 @@ export class VideoGenerator {
       }
 
       console.log("🎞️ Rendering Ken Burns zoom & panning animation (5 sec, 1080p, Reels ready)...");
-      // Crop to vertical 9:16 aspect ratio (1080x1920) and apply slow zoom-in
-      const ffmpegCommand = `"${ffmpegPath}" -y -loop 1 -i "${inputImagePath}" -vf "scale=iw*2:ih*2,zoompan=z='zoom+0.0015':d=125:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=25" -c:v libx264 -pix_fmt yuv420p -t 5 "${outputVideoPath}"`;
+      // Crop to vertical 9:16 aspect ratio (1080x1920) and apply slow zoom-in with high-quality presets
+      const ffmpegCommand = `"${ffmpegPath}" -y -loop 1 -i "${inputImagePath}" -vf "scale=iw*2:ih*2:flags=lanczos,zoompan=z='zoom+0.0015':d=125:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=25" -c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p -t 5 "${outputVideoPath}"`;
+
 
       await new Promise<void>((resolve, reject) => {
         exec(ffmpegCommand, (error, stdout, stderr) => {

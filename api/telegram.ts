@@ -3,6 +3,9 @@ import { NotionClient } from "../src/services/notion-client.js";
 import { GitHubClient } from "../src/services/github-client.js";
 import { InstagramClient } from "../src/services/instagram-client.js";
 import { TelegramClient } from "../src/services/telegram-client.js";
+import { GeminiClient } from "../src/services/gemini-client.js";
+import { OpenCodeChatClient } from "../src/services/opencode-client.js";
+import { MemeService } from "../src/services/meme-service.js";
 
 // Basic HTML styling for Telegram messages
 const HELP_MESSAGE = `
@@ -26,13 +29,18 @@ Manage your automated workspace directly from chat!
 • <code>/reel [Video Prompt]</code> - Generate an animated video Reel, review, then confirm to post
 • <code>/igstats</code> - 📊 Instagram analytics dashboard
 
+😂 <b>Memes</b>
+• <code>/meme</code> - Fetch a random trending meme (preview + confirm)
+• <code>/meme [topic]</code> - Search memes about a topic (e.g. /meme marriage)
+• <code>/aiimage [concept]</code> - AI-generate a meme image (preview + confirm)
+
 🤖 <b>AI Usage</b>
 • <code>/credits</code> - View AI service usage & credit status
 
 📧 <b>Reports</b>
 • <code>/email</code> - Send full dashboard report to your email (charts included!)
 
-<i>Or just type a message, and it will be added as a general task to your Notion database!</i>
+<i>Type normally to chat with AI. Prefix with "task" or "todo" to add to Notion.</i>
 `;
 
 export default async function handler(
@@ -54,6 +62,7 @@ export default async function handler(
   const gmailUser = process.env.GMAIL_USER;
   const gmailAppPassword = process.env.GMAIL_APP_PASSWORD;
   const emailTo = process.env.EMAIL_TO;
+  const geminiApiKey = process.env.GEMINI_API_KEY;
 
   if (!token || !chatId || !notionToken || !notionDbId || !githubToken) {
     return res.status(500).json({ error: "Missing required server credentials" });
@@ -716,139 +725,179 @@ export default async function handler(
           break;
         }
 
+        case "/meme": {
+          const memeService = new MemeService();
+          const memeQuery = args.trim();
+
+          if (!memeQuery) {
+            // No description: show a random trending meme as preview
+            await telegram.sendMessage("😂 Fetching a random trending meme...");
+            try {
+              const meme = await memeService.fetchRandom();
+              const caption = `${meme.title} 😂\n\n#memes #funny #viral #trending #relatable`;
+              const page = await notion.createTask({
+                name: caption,
+                platform: "Instagram",
+                priority: "Medium",
+                details: meme.imageUrl,
+              });
+              const memeShortId = page.id.replace(/-/g, "").slice(-6);
+
+              await telegram.sendMessage(
+                `😂 <b>Trending Meme Preview</b>\n\n` +
+                `📝 <b>Title:</b> ${meme.title}\n` +
+                `⬆️ <b>Upvotes:</b> ${meme.upvotes} • ${meme.source} (r/${meme.subreddit})\n\n` +
+                `🔗 <a href="${meme.imageUrl}">🖼 Preview Image</a>\n\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `👉 Happy with it? Confirm to post:\n` +
+                `<code>/confirm_${memeShortId}</code>\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+              );
+            } catch (memeErr: any) {
+              await telegram.sendMessage(`❌ Failed to fetch meme: ${memeErr.message}`);
+            }
+          } else {
+            // Search for memes related to the description
+            await telegram.sendMessage(`🔍 Searching for memes about "<b>${memeQuery}</b>"...`);
+            try {
+              const memes = await memeService.searchByTopic(memeQuery, 5);
+
+              if (memes.length === 0) {
+                await telegram.sendMessage(`😢 No memes found for "${memeQuery}". Try a different topic!`);
+                break;
+              }
+
+              const best = memes[0];
+              const caption = `${best.title} 😂\n\n#memes #funny #${memeQuery.replace(/\s+/g, "").toLowerCase()} #viral #trending`;
+              const page = await notion.createTask({
+                name: caption,
+                platform: "Instagram",
+                priority: "Medium",
+                details: best.imageUrl,
+              });
+              const memeShortId = page.id.replace(/-/g, "").slice(-6);
+
+              let msg =
+                `😂 <b>Found ${memes.length} meme${memes.length > 1 ? "s" : ""} about "${memeQuery}"</b>\n\n` +
+                `🏆 <b>Top Pick:</b>\n` +
+                `📝 ${best.title}\n` +
+                `⬆️ ${best.upvotes} upvotes • ${best.source}\n` +
+                `🔗 <a href="${best.imageUrl}">🖼 Preview Image</a>\n\n`;
+
+              if (memes.length > 1) {
+                msg += `📋 <b>Other results:</b>\n`;
+                for (let i = 1; i < memes.length; i++) {
+                  const m = memes[i];
+                  msg += `${i + 1}. ${m.title} (⬆️${m.upvotes}) — <a href="${m.imageUrl}">View</a>\n`;
+                }
+                msg += `\n`;
+              }
+
+              msg +=
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `👉 Happy with the top pick? Confirm to post:\n` +
+                `<code>/confirm_${memeShortId}</code>\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━`;
+
+              await telegram.sendMessage(msg);
+            } catch (memeErr: any) {
+              await telegram.sendMessage(`❌ Failed to search memes: ${memeErr.message}`);
+            }
+          }
+          break;
+        }
+
+        case "/aiimage": {
+          const aiMemeService = new MemeService();
+          const aiConcept = args.trim() || "a funny programming meme about debugging at 3am";
+          await telegram.sendMessage(`🎨 Generating AI meme about "<b>${aiConcept}</b>"...`);
+
+          try {
+            const result = await aiMemeService.generateAIMeme(aiConcept, geminiApiKey);
+
+            const page = await notion.createTask({
+              name: result.caption,
+              platform: "Instagram",
+              priority: "Medium",
+              details: result.imageUrl,
+            });
+            const aiShortId = page.id.replace(/-/g, "").slice(-6);
+
+            await telegram.sendMessage(
+              `🎨 <b>AI Meme Preview Ready!</b>\n\n` +
+              `📝 <b>Caption:</b> ${result.caption}\n\n` +
+              `🔗 <a href="${result.imageUrl}">🖼 Preview Image</a>\n\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+              `👉 Happy with it? Confirm to post:\n` +
+              `<code>/confirm_${aiShortId}</code>\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+            );
+          } catch (aiMemeErr: any) {
+            await telegram.sendMessage(`❌ Failed to generate AI meme: ${aiMemeErr.message}`);
+          }
+          break;
+        }
+
         default:
           await telegram.sendMessage("❓ Unknown command. Type <code>/help</code> to see available commands.");
       }
     } else {
-      // 2. Natural language message — detect Instagram/AI art intent
+      // 2. Natural language message handling
       const lower = text.toLowerCase();
-      const isInstagramIntent =
-        lower.includes("instagram") ||
-        lower.includes("post to ig") ||
-        lower.includes("ig post") ||
-        lower.includes("insta");
-      const isAIArtIntent =
-        lower.includes("create image") ||
-        lower.includes("generate image") ||
-        lower.includes("make image") ||
-        lower.includes("draw") ||
-        lower.includes("ai art") ||
-        lower.includes("ai image");
-      const isReelIntent =
-        lower.includes("reel") ||
-        lower.includes("video") ||
-        lower.includes("reels") ||
-        lower.includes("movie") ||
-        lower.includes("animation") ||
-        lower.includes("animate");
 
-      if (isReelIntent || (isInstagramIntent && (lower.includes("video") || lower.includes("reel")))) {
-        // Strip common trigger phrases for reels
-        const prompt = text
-          .replace(/post (this |it |video )?to instagram/gi, "")
-          .replace(/create (an? )?(animated |reels? )?video (and )?post (to )?(instagram|ig|insta)?/gi, "")
-          .replace(/generate (an? )?(animated |reels? )?video (and )?post (to )?(instagram|ig|insta)?/gi, "")
-          .replace(/make (an? )?(animated |reels? )?video (and )?post (to )?(instagram|ig|insta)?/gi, "")
-          .replace(/post (to )?(instagram|ig|insta)/gi, "")
-          .replace(/(instagram|insta|ig) (reels?|video)/gi, "")
-          .replace(/animated video/gi, "")
-          .replace(/reels?/gi, "")
-          .replace(/video/gi, "")
-          .trim() || text;
+      // Check if explicitly requesting task creation
+      const isExplicitTask = lower.startsWith("task ") || lower.startsWith("todo ");
 
-        await telegram.sendMessage("🎬 Detected Reels intent! Generating animated video preview (takes ~30-45s)...");
-
-        try {
-          const { VideoGenerator } = await import("../src/services/video-generator.js");
-          const generator = new VideoGenerator(process.env.GEMINI_API_KEY);
-          const videoUrl = await generator.generateVideo(prompt);
-
-          const igPage = await notion.createTask({
-            name: prompt,
-            platform: "Instagram",
-            priority: "Medium",
-            details: videoUrl,
-          });
-
-          const igShortId = igPage.id.replace(/-/g, "").slice(-8);
-
-          await telegram.sendMessage(
-            `🎬 <b>AI Reel Video Ready!</b>\n\n` +
-            `• <b>Prompt:</b> ${prompt}\n` +
-            `• <b>Platform:</b> Instagram Reels\n` +
-            `• <b>Status:</b> Pending Confirm\n` +
-            `🔗 <a href="${videoUrl}">Click to preview video Reel</a>\n\n` +
-            `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-            `👉 Happy with it? Send to publish:\n` +
-            `<code>/confirm_${igShortId}</code>\n` +
-            `━━━━━━━━━━━━━━━━━━━━━━━━━━`
-          );
-        } catch (err: any) {
-          await telegram.sendMessage(`❌ <b>Video generation failed:</b> ${err.message}`);
-        }
-      } else if (isInstagramIntent || isAIArtIntent) {
-        // Strip common trigger phrases to get the actual prompt
-        const prompt = text
-          .replace(/post (this |it |image )?to instagram/gi, "")
-          .replace(/create (an? )?image (and )?post (to )?(instagram|ig|insta)?/gi, "")
-          .replace(/generate (an? )?image (and )?post (to )?(instagram|ig|insta)?/gi, "")
-          .replace(/make (an? )?image (and )?post (to )?(instagram|ig|insta)?/gi, "")
-          .replace(/post (to )?(instagram|ig|insta)/gi, "")
-          .replace(/(instagram|insta|ig) post/gi, "")
-          .replace(/ai art/gi, "")
-          .replace(/ai image/gi, "")
-          .trim() || text;
-
-        await telegram.sendMessage("🎨 Detected Instagram intent! Generating AI image preview...");
-
-        let aiImageUrl = "";
-        const geminiApiKey = process.env.GEMINI_API_KEY;
-        if (geminiApiKey) {
-          try {
-            const { GeminiClient } = await import("../src/services/gemini-client.js");
-            const gemini = new GeminiClient(geminiApiKey);
-            aiImageUrl = await gemini.generateImage(prompt, { enhance: true });
-          } catch (_) {}
-        }
-        if (!aiImageUrl) {
-          const seed = Math.floor(Math.random() * 1000000);
-          aiImageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&model=flux&seed=${seed}&nologo=true`;
-        }
-
-        const igPage = await notion.createTask({
-          name: prompt,
-          platform: "Instagram",
-          priority: "Medium",
-          details: aiImageUrl,
-        });
-
-        const igShortId = igPage.id.replace(/-/g, "").slice(-8);
-
-        await telegram.sendMessage(
-          `🎨 <b>AI Image Preview Ready!</b>\n\n` +
-          `• <b>Prompt:</b> ${prompt}\n` +
-          `• <b>Platform:</b> Instagram\n` +
-          `• <b>Status:</b> Pending Confirm\n` +
-          `🔗 <a href="${aiImageUrl}">Click to preview image</a>\n\n` +
-          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-          `👉 Happy with it? Send to publish:\n` +
-          `<code>/confirm_${igShortId}</code>\n` +
-          `━━━━━━━━━━━━━━━━━━━━━━━━━━`
-        );
-      } else {
-        // Generic task — save to Notion as General
+      if (isExplicitTask) {
+        const taskName = text.replace(/^(task|todo)\s+/gi, "").trim();
         const page = await notion.createTask({
-          name: text,
+          name: taskName,
           platform: "General",
           priority: "Medium",
-          details: "Added via conversational Telegram message.",
+          details: "Added via conversational task command.",
         });
 
         await telegram.sendMessage(
           `📝 <b>Added to Notion Inbox</b>\n\n` +
-          `• <b>Task:</b> ${text}\n` +
+          `• <b>Task:</b> ${taskName}\n` +
           `🔗 <a href="https://notion.so/${page.id.replace(/-/g, "")}">Open in Notion</a>`
         );
+      } else {
+        // Respond back normally via conversational AI
+        const chatSystemPrompt = "You are a helpful, witty, and concise coding & productivity assistant integrated as a Telegram bot. Keep your responses engaging and concise (under 200 words). Format your output in basic clean HTML styling if using bold, lists, or headers (e.g. <b>bold</b>, <i>italic</i>, <code>code</code>) so that it formats nicely on Telegram. Do NOT use markdown formatting.";
+
+        let chatResponse: string | null = null;
+
+        // Try OpenCode first (free, uses deepseek via local server)
+        try {
+          const opencode = new OpenCodeChatClient();
+          chatResponse = await opencode.chat(text, chatSystemPrompt);
+          console.log("✅ OpenCode responded successfully");
+        } catch (ocErr: any) {
+          console.warn("⚠️ OpenCode unavailable, trying Gemini fallback:", ocErr.message);
+        }
+
+        // Fallback to Gemini if OpenCode failed
+        if (!chatResponse && geminiApiKey) {
+          try {
+            const gemini = new GeminiClient(geminiApiKey);
+            chatResponse = await gemini.chat(text, chatSystemPrompt);
+            console.log("✅ Gemini responded successfully");
+          } catch (geminiErr: any) {
+            console.warn("⚠️ Gemini also failed:", geminiErr.message);
+          }
+        }
+
+        if (chatResponse) {
+          await telegram.sendMessage(chatResponse);
+        } else {
+          await telegram.sendMessage(
+            `🤖 <b>Notion MCP Task Assistant</b>\n\n` +
+            `• To add a task, prefix with <code>task</code> or <code>todo</code>.\n` +
+            `• Use <code>/meme [topic]</code> to find memes.\n` +
+            `• Use <code>/aiimage [idea]</code> to generate AI memes.`
+          );
+        }
       }
     }
 

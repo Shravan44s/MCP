@@ -51,6 +51,50 @@ export class GeminiClient {
     }
   }
 
+  /**
+   * Generates a conversational text response using Gemini 2.5 Flash
+   */
+  async chat(message: string, systemPrompt?: string): Promise<string> {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${this.apiKey}`;
+      
+      const contents: any[] = [];
+      if (systemPrompt) {
+        contents.push({
+          role: "user",
+          parts: [{ text: `System Instructions: ${systemPrompt}` }]
+        });
+      }
+      contents.push({
+        role: "user",
+        parts: [{ text: message }]
+      });
+
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Gemini chat API returned status ${response.status}`);
+      }
+
+      const data: any = await response.json();
+      const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      
+      if (!responseText) {
+        throw new Error("No text candidates returned from Gemini");
+      }
+
+      return responseText.trim();
+    } catch (err: any) {
+      console.error("❌ Gemini Chat error:", err);
+      return `🤖 I'm sorry, I encountered an issue chatting: ${err.message}`;
+    }
+  }
+
+
   async generateImage(prompt: string, options?: { enhance?: boolean }): Promise<string> {
     if (!this.apiKey) {
       throw new Error("Gemini API key is not configured.");
@@ -81,20 +125,20 @@ export class GeminiClient {
     const buffer = Buffer.from(arrayBuffer);
 
     console.log("☁️ Uploading generated image to Catbox.moe...");
-    const fileUrl = await this.uploadToCatbox(buffer);
+    const fileUrl = await this.uploadToCatbox(arrayBuffer);
     console.log(`🔗 Short hosted image URL ready: ${fileUrl}`);
 
     return fileUrl;
   }
 
   /**
-   * Helper to upload image Buffer anonymously to Catbox.moe
+   * Helper to upload image ArrayBuffer anonymously to Catbox.moe
    */
-  private async uploadToCatbox(buffer: Buffer): Promise<string> {
+  private async uploadToCatbox(arrayBuffer: ArrayBuffer): Promise<string> {
     const formData = new FormData();
     formData.append("reqtype", "fileupload");
     
-    const blob = new Blob([new Uint8Array(buffer)], { type: "image/jpeg" });
+    const blob = new Blob([arrayBuffer], { type: "image/jpeg" });
     formData.append("fileToUpload", blob, "image.jpg");
 
     const res = await fetch("https://catbox.moe/user/api.php", {
