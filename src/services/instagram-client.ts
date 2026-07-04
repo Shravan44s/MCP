@@ -69,6 +69,10 @@ export class InstagramClient {
 
     const creationId = containerData.id;
 
+    // Wait 3 seconds to let Meta's servers process the image from the URL
+    console.log(`📡 Photo container created: ${creationId}. Waiting 3 seconds before publishing...`);
+    await new Promise((r) => setTimeout(r, 3000));
+
     // Step 2: Publish the media container
     const publishUrl = `${this.baseUrl}/${this.userId}/media_publish`;
     const publishRes = await fetch(publishUrl, {

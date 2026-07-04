@@ -22,3 +22,4 @@ dist/
 .opencode*
 opencode.jsonc
 temp.jpg
+.env*
