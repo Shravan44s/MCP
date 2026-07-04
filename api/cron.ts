@@ -244,9 +244,15 @@ export default async function handler(
       return res.status(200).json({ message: "No pending tasks found" });
     }
 
+    // Advanced Queueing: Sort tasks by priority level (High > Medium > Low) so critical tasks execute first
+    const priorityWeight = { High: 3, Medium: 2, Low: 1 };
+    const sortedTasks = [...tasks].sort(
+      (a, b) => (priorityWeight[b.priority] || 0) - (priorityWeight[a.priority] || 0)
+    );
+
     const summary: string[] = [];
 
-    for (const task of tasks) {
+    for (const task of sortedTasks) {
       await notionClient.updateTaskStatus(task.id, "In Progress");
       let result: TaskExecutionResult;
 

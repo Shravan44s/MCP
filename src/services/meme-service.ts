@@ -93,8 +93,6 @@ export class MemeService {
    * @param count How many results to return (default 5)
    */
   async searchByTopic(query: string, count: number = 5): Promise<MemeResult[]> {
-    // Try the topic as a subreddit name first (e.g. "marriage" -> r/marriage)
-    // then broaden to general meme subreddits
     const topicSubs = [
       query.toLowerCase().replace(/\s+/g, ""),
       `${query.toLowerCase().replace(/\s+/g, "")}memes`,
@@ -104,21 +102,19 @@ export class MemeService {
       "funny",
     ];
 
-    const allResults: MemeResult[] = [];
+    console.log(`🔍 Concurrent search initiated for "${query}" across ${topicSubs.length} subreddits...`);
     const queryWords = query.toLowerCase().split(/\s+/);
 
-    for (const sub of topicSubs) {
-      if (allResults.length >= count) break;
+    // Fetch all subreddits concurrently
+    const promises = topicSubs.map(async (sub) => {
       try {
         const url = `https://meme-api.com/gimme/${sub}/${Math.min(10, count * 2)}`;
-        console.log(`🔍 Searching r/${sub} for "${query}"...`);
         const res = await fetch(url);
-        if (!res.ok) continue;
+        if (!res.ok) return [];
 
         const data: { count: number; memes: RedditMeme[] } = await res.json() as any;
         const safeMemes = data.memes.filter((m) => !m.nsfw && !m.spoiler);
 
-        // For topic-specific subs, keep all results; for general subs, filter by title
         const isTopicSub = sub !== "memes" && sub !== "dankmemes" && sub !== "me_irl" && sub !== "funny";
         const matches = isTopicSub
           ? safeMemes
@@ -126,26 +122,34 @@ export class MemeService {
               queryWords.some((w) => m.title.toLowerCase().includes(w))
             );
 
-        for (const m of matches) {
-          if (allResults.length >= count) break;
-          // Avoid duplicates
-          if (allResults.some((r) => r.postLink === m.postLink)) continue;
-          allResults.push({
-            title: m.title,
-            imageUrl: m.url,
-            source: `r/${sub}`,
-            upvotes: m.ups,
-            subreddit: m.subreddit || sub,
-            postLink: m.postLink,
-          });
-        }
+        return matches.map((m) => ({
+          title: m.title,
+          imageUrl: m.url,
+          source: `r/${sub}`,
+          upvotes: m.ups,
+          subreddit: m.subreddit || sub,
+          postLink: m.postLink,
+        }));
       } catch {
-        // Subreddit might not exist, skip
-        continue;
+        return [];
+      }
+    });
+
+    const results = await Promise.allSettled(promises);
+    const allResults: MemeResult[] = [];
+
+    // Aggregate and filter duplicates
+    for (const r of results) {
+      if (r.status === 'fulfilled') {
+        for (const item of r.value) {
+          if (!allResults.some((existing) => existing.postLink === item.postLink)) {
+            allResults.push(item);
+          }
+        }
       }
     }
 
-    // Sort by upvotes descending
+    // Sort by upvotes descending and limit count
     return allResults.sort((a, b) => b.upvotes - a.upvotes).slice(0, count);
   }
 
@@ -153,7 +157,7 @@ export class MemeService {
    * Generates a custom AI meme image using Pollinations.ai
    * Uses Gemini to enhance the meme concept into a visual prompt
    */
-  async generateAIMeme(concept: string, geminiApiKey?: string): Promise<{ imageUrl: string; caption: string }> {
+  async generateAIMeme(concept: string, geminiApiKey?: string, style?: string): Promise<{ imageUrl: string; caption: string }> {
     let visualPrompt = concept;
     let caption = concept;
 
@@ -161,6 +165,8 @@ export class MemeService {
     if (geminiApiKey) {
       try {
         const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`;
+        const styleInstruction = style ? `Render the visual scene in a distinct "${style}" artistic style. ` : "";
+        
         const response = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -168,7 +174,7 @@ export class MemeService {
             contents: [{
               parts: [{
                 text: `Create a viral Instagram meme concept. Return ONLY a JSON object with two fields:
-1. "visual": A detailed image generation prompt for a funny meme image (no text overlays, just the visual scene). Under 80 words.
+1. "visual": A detailed image generation prompt for a funny meme image (no text overlays, just the visual scene). ${styleInstruction}Under 80 words.
 2. "caption": A short, funny Instagram caption with emojis and hashtags. Under 150 characters.
 
 Meme concept: ${concept}

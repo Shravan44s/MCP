@@ -12,6 +12,10 @@
       "dest": "api/cron.ts"
     },
     {
+      "src": "/api/mobile",
+      "dest": "api/mobile.ts"
+    },
+    {
       "src": "/api/telegram",
       "dest": "api/telegram.ts"
     },

@@ -767,36 +767,47 @@ export default async function handler(
                 break;
               }
 
-              const best = memes[0];
-              const caption = `${best.title} 😂\n\n#memes #funny #${memeQuery.replace(/\s+/g, "").toLowerCase()} #viral #trending`;
-              const page = await notion.createTask({
-                name: caption,
-                platform: "Instagram",
-                priority: "Medium",
-                details: best.imageUrl,
-              });
-              const memeShortId = page.id.replace(/-/g, "").slice(-6);
+              // Create a Notion task for EVERY meme result so each gets its own confirm ID
+              const memeEntries: { meme: (typeof memes)[0]; shortId: string }[] = [];
+              for (const m of memes) {
+                const memeCaption = `${m.title} 😂\n\n#memes #funny #${memeQuery.replace(/\s+/g, "").toLowerCase()} #viral #trending`;
+                const memePage = await notion.createTask({
+                  name: memeCaption,
+                  platform: "Instagram",
+                  priority: "Medium",
+                  details: m.imageUrl,
+                });
+                memeEntries.push({
+                  meme: m,
+                  shortId: memePage.id.replace(/-/g, "").slice(-6),
+                });
+              }
+
+              const best = memeEntries[0];
 
               let msg =
                 `😂 <b>Found ${memes.length} meme${memes.length > 1 ? "s" : ""} about "${memeQuery}"</b>\n\n` +
-                `🏆 <b>Top Pick:</b>\n` +
-                `📝 ${best.title}\n` +
-                `⬆️ ${best.upvotes} upvotes • ${best.source}\n` +
-                `🔗 <a href="${best.imageUrl}">🖼 Preview Image</a>\n\n`;
+                `🏆 <b>#1 — Top Pick</b>\n` +
+                `📝 ${best.meme.title}\n` +
+                `⬆️ ${best.meme.upvotes} upvotes • ${best.meme.source}\n` +
+                `🔗 <a href="${best.meme.imageUrl}">🖼 Preview Image</a>\n` +
+                `👉 <code>/confirm_${best.shortId}</code>\n`;
 
-              if (memes.length > 1) {
-                msg += `📋 <b>Other results:</b>\n`;
-                for (let i = 1; i < memes.length; i++) {
-                  const m = memes[i];
-                  msg += `${i + 1}. ${m.title} (⬆️${m.upvotes}) — <a href="${m.imageUrl}">View</a>\n`;
+              if (memeEntries.length > 1) {
+                msg += `\n📋 <b>Other options (each has its own confirm):</b>\n`;
+                for (let i = 1; i < memeEntries.length; i++) {
+                  const entry = memeEntries[i];
+                  msg +=
+                    `\n${i + 1}. <b>${entry.meme.title}</b>\n` +
+                    `   ⬆️ ${entry.meme.upvotes} upvotes • ${entry.meme.source}\n` +
+                    `   🔗 <a href="${entry.meme.imageUrl}">🖼 Preview</a>\n` +
+                    `   👉 <code>/confirm_${entry.shortId}</code>\n`;
                 }
-                msg += `\n`;
               }
 
               msg +=
-                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                `👉 Happy with the top pick? Confirm to post:\n` +
-                `<code>/confirm_${memeShortId}</code>\n` +
+                `\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `Send the <code>/confirm_&lt;id&gt;</code> of the meme you want to post to Instagram!\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━`;
 
               await telegram.sendMessage(msg);
