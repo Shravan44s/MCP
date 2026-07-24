@@ -107,10 +107,16 @@ export class VideoGenerator {
 
     try {
       // Step C: Download image locally
-      console.log(`📥 Downloading base image: ${imageUrl} -> ${inputImagePath}`);
+      console.log(`📥 Downloading base image: ${imageUrl}`);
       const response = await fetch(imageUrl);
-      if (!response.ok) throw new Error("Failed to download generated image");
+      if (!response.ok) throw new Error("Failed to download base image");
       const buffer = Buffer.from(await response.arrayBuffer());
+
+      // Check magic bytes to detect if image is a GIF (GIFs require -ignore_loop 0 instead of -loop 1 in FFmpeg)
+      const isGif = buffer.toString("ascii", 0, 3) === "GIF";
+      const ext = isGif ? ".gif" : ".jpg";
+      const inputImagePath = path.join(tmpDir, `input_${uniqueId}${ext}`);
+      const outputVideoPath = path.join(tmpDir, `output_${uniqueId}.mp4`);
       fs.writeFileSync(inputImagePath, buffer);
 
       // Step D: Run FFmpeg to compile Zoom/Pan animated video
@@ -118,13 +124,13 @@ export class VideoGenerator {
         throw new Error("Static FFmpeg binary path could not be resolved");
       }
 
-      console.log("🎞️ Rendering Ken Burns zoom & panning animation (5 sec, 1080p, Reels ready)...");
+      console.log(`🎞️ Rendering Ken Burns zoom & panning animation (5 sec, 1080p, Reels ready, format: ${isGif ? "GIF" : "static image"})...`);
+      const loopFlag = isGif ? "-ignore_loop 0" : "-loop 1";
       // Crop to vertical 9:16 aspect ratio (1080x1920) and apply slow zoom-in with high-quality presets
-      const ffmpegCommand = `"${ffmpegPath}" -y -loop 1 -i "${inputImagePath}" -vf "scale=iw*2:ih*2:flags=lanczos,zoompan=z='zoom+0.0015':d=125:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=25" -c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p -t 5 "${outputVideoPath}"`;
-
+      const ffmpegCommand = `"${ffmpegPath}" -y ${loopFlag} -i "${inputImagePath}" -vf "scale=iw*2:ih*2:flags=lanczos,zoompan=z='zoom+0.0015':d=125:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=25" -c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p -t 5 "${outputVideoPath}"`;
 
       await new Promise<void>((resolve, reject) => {
-        exec(ffmpegCommand, (error, stdout, stderr) => {
+        exec(ffmpegCommand, { maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
           if (error) {
             console.error("FFmpeg Error details:", stderr);
             reject(new Error(`FFmpeg failed: ${error.message}`));
