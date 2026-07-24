@@ -56,6 +56,10 @@ jobs:
           IMGFLIP_PASSWORD: ${{ secrets.IMGFLIP_PASSWORD }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Auto-issued per-run token (contents: write via the permissions
+          # block above) — used to host the rendered video as a release
+          # asset, since Catbox/0x0.st block cloud IPs like this runner's.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Commit updated meme ledger
         if: env.DRY_RUN != 'true'

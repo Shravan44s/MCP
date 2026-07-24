@@ -12,16 +12,21 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { GeminiClient } from "./gemini-client.js";
+import { hostFilePublicly } from "./media-host.js";
 
 export class VideoGenerator {
   private geminiKey?: string;
+  private githubToken?: string;
+  private mediaRepo?: string;
 
-  constructor(geminiKey?: string) {
+  constructor(geminiKey?: string, githubToken?: string, mediaRepo?: string) {
     this.geminiKey = geminiKey;
+    this.githubToken = githubToken;
+    this.mediaRepo = mediaRepo;
   }
 
   /**
-   * Main entry point to generate a free video clip (returns hosted URL on Catbox.moe)
+   * Main entry point to generate a free video clip (returns a publicly hosted URL)
    */
   async generateVideo(prompt: string): Promise<string> {
     console.log(`🎬 Video Generator received request for prompt: "${prompt}"`);
@@ -80,7 +85,7 @@ export class VideoGenerator {
     }
 
     // Generate a brand-new Flux base image from the text prompt, then animate it
-    const gemini = new GeminiClient(this.geminiKey);
+    const gemini = new GeminiClient(this.geminiKey, this.githubToken, this.mediaRepo);
     console.log("🎨 Generating high-quality Flux base image via Pollinations...");
     const imageUrl = await gemini.generateImage(prompt, { enhance: true });
     return this.animateImageUrl(imageUrl);
@@ -157,46 +162,12 @@ export class VideoGenerator {
   }
 
   /**
-   * Uploads a file buffer to a public host and returns its URL. Tries
-   * Catbox first (no userhash field — an anonymous upload should omit it
-   * entirely, not send it empty). Cloud/datacenter IPs (CI runners,
-   * serverless functions) can get caught by Catbox's anti-abuse filtering
-   * in ways a residential IP won't, so this falls back to 0x0.st rather
-   * than hard-failing the whole pipeline.
+   * Uploads a file buffer to a public host and returns its URL.
    */
   private async uploadFile(buffer: Buffer, filename: string, mimeType: string): Promise<string> {
-    try {
-      return await this.postMultipart("https://catbox.moe/user/api.php", "fileToUpload", buffer, filename, mimeType, { reqtype: "fileupload" });
-    } catch (catboxErr: any) {
-      console.warn(`⚠️ Catbox upload failed (${catboxErr.message}). Retrying via 0x0.st...`);
-      try {
-        return await this.postMultipart("https://0x0.st", "file", buffer, filename, mimeType, {});
-      } catch (fallbackErr: any) {
-        throw new Error(`Catbox: ${catboxErr.message} | 0x0.st: ${fallbackErr.message}`);
-      }
+    if (!this.githubToken || !this.mediaRepo) {
+      throw new Error("GITHUB_TOKEN and GITHUB_MEDIA_REPO must be configured to host rendered media");
     }
-  }
-
-  private async postMultipart(
-    url: string,
-    fileFieldName: string,
-    buffer: Buffer,
-    filename: string,
-    mimeType: string,
-    extraFields: Record<string, string>
-  ): Promise<string> {
-    const formData = new FormData();
-    for (const [key, value] of Object.entries(extraFields)) {
-      formData.append(key, value);
-    }
-    const blob = new Blob([new Uint8Array(buffer)], { type: mimeType });
-    formData.append(fileFieldName, blob, filename);
-
-    const res = await fetch(url, { method: "POST", body: formData });
-    const text = (await res.text()).trim();
-    if (!res.ok || !text.startsWith("http")) {
-      throw new Error(`HTTP ${res.status} ${res.statusText}: ${text.slice(0, 200) || "(empty response)"}`);
-    }
-    return text;
+    return hostFilePublicly(this.githubToken, this.mediaRepo, buffer, filename, mimeType);
   }
 }

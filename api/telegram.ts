@@ -66,6 +66,7 @@ export default async function handler(
   const gmailAppPassword = process.env.GMAIL_APP_PASSWORD;
   const emailTo = process.env.EMAIL_TO;
   const geminiApiKey = process.env.GEMINI_API_KEY;
+  const githubMediaRepo = process.env.GITHUB_MEDIA_REPO;
 
   if (!token || !chatId || !notionToken || !notionDbId || !githubToken) {
     return res.status(500).json({ error: "Missing required server credentials" });
@@ -79,7 +80,7 @@ export default async function handler(
     instagramToken && instagramUserId
       ? new InstagramClient(instagramToken, instagramUserId)
       : undefined;
-  const videoGenerator = new VideoGenerator(geminiApiKey);
+  const videoGenerator = new VideoGenerator(geminiApiKey, githubToken, githubMediaRepo);
 
   try {
     const update = req.body;
@@ -615,7 +616,7 @@ export default async function handler(
           if (geminiApiKey) {
             try {
               const { GeminiClient } = await import("../src/services/gemini-client.js");
-              const gemini = new GeminiClient(geminiApiKey);
+              const gemini = new GeminiClient(geminiApiKey, githubToken, githubMediaRepo);
               imageUrl = await gemini.generateImage(args, { enhance: true });
             } catch (err: any) {
               await telegram.sendMessage(`⚠️ Gemini generation failed: ${err.message}. Falling back to default generator.`);

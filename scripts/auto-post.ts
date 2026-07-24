@@ -46,13 +46,22 @@ async function main() {
   const imgflipPassword = process.env.IMGFLIP_PASSWORD;
   const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
   const telegramChatId = process.env.TELEGRAM_CHAT_ID;
+  // GITHUB_TOKEN/GITHUB_REPOSITORY are auto-injected by GitHub Actions for
+  // every job — used here to host the rendered video as a release asset
+  // (Catbox/0x0.st actively block cloud IPs, which is exactly what an
+  // Actions runner is; see the media-host.ts service for why).
+  const githubToken = process.env.GITHUB_TOKEN;
+  const githubMediaRepo = process.env.GITHUB_MEDIA_REPO || process.env.GITHUB_REPOSITORY;
 
   if (!instagramToken || !instagramUserId) {
     throw new Error("INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_USER_ID are required");
   }
+  if (!githubToken || !githubMediaRepo) {
+    throw new Error("GITHUB_TOKEN and GITHUB_MEDIA_REPO (or GITHUB_REPOSITORY) are required to host the rendered video");
+  }
 
   const instagram = new InstagramClient(instagramToken, instagramUserId);
-  const videoGenerator = new VideoGenerator(geminiApiKey);
+  const videoGenerator = new VideoGenerator(geminiApiKey, githubToken, githubMediaRepo);
   const memeService = new MemeService();
   const ledger = new MemeLedger();
   const telegram = telegramToken && telegramChatId ? new TelegramClient(telegramToken, telegramChatId) : undefined;

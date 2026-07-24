@@ -39,6 +39,7 @@ export default async function handler(
   const instagramToken = process.env.INSTAGRAM_ACCESS_TOKEN;
   const instagramUserId = process.env.INSTAGRAM_USER_ID;
   const geminiApiKey = process.env.GEMINI_API_KEY;
+  const githubMediaRepo = process.env.GITHUB_MEDIA_REPO;
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
 
@@ -57,7 +58,7 @@ export default async function handler(
     const instagram = instagramToken && instagramUserId ? new InstagramClient(instagramToken, instagramUserId) : undefined;
     const telegram = token && chatId ? new TelegramClient(token, chatId) : undefined;
     const memeService = new MemeService();
-    const videoGenerator = new VideoGenerator(geminiApiKey);
+    const videoGenerator = new VideoGenerator(geminiApiKey, githubToken, githubMediaRepo);
 
     switch (action) {
       // ---- General Dashboard ----
@@ -521,7 +522,7 @@ export default async function handler(
                 let imageUrl = "";
                 if (geminiApiKey) {
                   try {
-                    const gemini = new GeminiClient(geminiApiKey);
+                    const gemini = new GeminiClient(geminiApiKey, githubToken, githubMediaRepo);
                     imageUrl = await gemini.generateImage(args, { enhance: true });
                   } catch (err: any) {
                     console.warn("Gemini generation failed on mobile command:", err.message);

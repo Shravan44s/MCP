@@ -3,11 +3,17 @@
 // Generates high-quality images and enhances prompts
 // ============================================
 
+import { hostFilePublicly } from "./media-host.js";
+
 export class GeminiClient {
   private apiKey: string;
+  private githubToken?: string;
+  private mediaRepo?: string;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, githubToken?: string, mediaRepo?: string) {
     this.apiKey = apiKey;
+    this.githubToken = githubToken;
+    this.mediaRepo = mediaRepo;
   }
 
   /**
@@ -121,36 +127,16 @@ export class GeminiClient {
       throw new Error(`Failed to fetch image from Pollinations: ${imageRes.statusText}`);
     }
 
-    const arrayBuffer = await imageRes.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    const buffer = Buffer.from(await imageRes.arrayBuffer());
 
-    console.log("☁️ Uploading generated image to Catbox.moe...");
-    const fileUrl = await this.uploadToCatbox(arrayBuffer);
-    console.log(`🔗 Short hosted image URL ready: ${fileUrl}`);
-
-    return fileUrl;
-  }
-
-  /**
-   * Helper to upload image ArrayBuffer anonymously to Catbox.moe
-   */
-  private async uploadToCatbox(arrayBuffer: ArrayBuffer): Promise<string> {
-    const formData = new FormData();
-    formData.append("reqtype", "fileupload");
-    
-    const blob = new Blob([arrayBuffer], { type: "image/jpeg" });
-    formData.append("fileToUpload", blob, "image.jpg");
-
-    const res = await fetch("https://catbox.moe/user/api.php", {
-      method: "POST",
-      body: formData,
-    });
-
-    if (!res.ok) {
-      throw new Error(`Catbox upload failed: ${res.statusText}`);
+    if (!this.githubToken || !this.mediaRepo) {
+      throw new Error("GITHUB_TOKEN and GITHUB_MEDIA_REPO must be configured to host generated images");
     }
 
-    const fileUrl = await res.text();
-    return fileUrl.trim();
+    console.log("☁️ Uploading generated image...");
+    const fileUrl = await hostFilePublicly(this.githubToken, this.mediaRepo, buffer, "image.jpg", "image/jpeg");
+    console.log(`🔗 Hosted image URL ready: ${fileUrl}`);
+
+    return fileUrl;
   }
 }

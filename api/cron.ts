@@ -8,7 +8,7 @@ import { VideoGenerator } from "../src/services/video-generator.js";
 import { publishMemeAsReel } from "../src/services/publisher.js";
 import type { NotionTask, TaskExecutionResult } from "../src/types/index.js";
 
-const videoGenerator = new VideoGenerator();
+const videoGenerator = new VideoGenerator(process.env.GEMINI_API_KEY, process.env.GITHUB_TOKEN, process.env.GITHUB_MEDIA_REPO);
 
 async function executeGitHubTask(
   task: NotionTask,

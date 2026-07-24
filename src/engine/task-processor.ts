@@ -14,7 +14,7 @@ import { VideoGenerator } from "../services/video-generator.js";
 import { publishMemeAsReel } from "../services/publisher.js";
 import type { NotionTask, TaskExecutionResult } from "../types/index.js";
 
-const videoGenerator = new VideoGenerator(process.env.GEMINI_API_KEY);
+const videoGenerator = new VideoGenerator(process.env.GEMINI_API_KEY, process.env.GITHUB_TOKEN, process.env.GITHUB_MEDIA_REPO);
 
 export function registerTaskProcessorTools(
   server: McpServer,
