@@ -131,28 +131,12 @@ export class VideoGenerator {
 
       console.log(`✅ Render complete! Output saved: ${outputVideoPath}`);
 
-      // Step E: Upload to Catbox
-      console.log("☁️ Uploading animated MP4 to Catbox.moe...");
-      const fileStream = fs.createReadStream(outputVideoPath);
-      const formData = new FormData();
-      formData.append("reqtype", "fileupload");
-      formData.append("userhash", "");
-      
-      const fileBlob = new Blob([fs.readFileSync(outputVideoPath)], { type: "video/mp4" });
-      formData.append("fileToUpload", fileBlob, "reel.mp4");
+      // Step E: Upload to a public host
+      console.log("☁️ Uploading animated MP4...");
+      const hostedUrl = await this.uploadFile(fs.readFileSync(outputVideoPath), "reel.mp4", "video/mp4");
 
-      const catboxRes = await fetch("https://catbox.moe/user/api.php", {
-        method: "POST",
-        body: formData,
-      });
-
-      const catboxUrl = (await catboxRes.text()).trim();
-      if (!catboxRes.ok || !catboxUrl.startsWith("http")) {
-        throw new Error(`Catbox upload failed: ${catboxUrl}`);
-      }
-
-      console.log(`🔗 Reels video uploaded: ${catboxUrl}`);
-      return catboxUrl;
+      console.log(`🔗 Reels video uploaded: ${hostedUrl}`);
+      return hostedUrl;
     } finally {
       // Cleanup temp files
       try {
@@ -163,29 +147,56 @@ export class VideoGenerator {
   }
 
   /**
-   * Helper: Download remote URL and upload to Catbox
+   * Helper: Download remote URL and upload to a public host
    */
   private async uploadToCatboxFromUrl(url: string): Promise<string> {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`Failed to fetch Gradio temporary video file: ${response.statusText}`);
     const buffer = Buffer.from(await response.arrayBuffer());
+    return this.uploadFile(buffer, "wan_video.mp4", "video/mp4");
+  }
 
-    const formData = new FormData();
-    formData.append("reqtype", "fileupload");
-    formData.append("userhash", "");
-    
-    const fileBlob = new Blob([buffer], { type: "video/mp4" });
-    formData.append("fileToUpload", fileBlob, "wan_video.mp4");
-
-    const catboxRes = await fetch("https://catbox.moe/user/api.php", {
-      method: "POST",
-      body: formData,
-    });
-
-    const catboxUrl = (await catboxRes.text()).trim();
-    if (!catboxRes.ok || !catboxUrl.startsWith("http")) {
-      throw new Error(`Catbox upload failed for Wan video: ${catboxUrl}`);
+  /**
+   * Uploads a file buffer to a public host and returns its URL. Tries
+   * Catbox first (no userhash field — an anonymous upload should omit it
+   * entirely, not send it empty). Cloud/datacenter IPs (CI runners,
+   * serverless functions) can get caught by Catbox's anti-abuse filtering
+   * in ways a residential IP won't, so this falls back to 0x0.st rather
+   * than hard-failing the whole pipeline.
+   */
+  private async uploadFile(buffer: Buffer, filename: string, mimeType: string): Promise<string> {
+    try {
+      return await this.postMultipart("https://catbox.moe/user/api.php", "fileToUpload", buffer, filename, mimeType, { reqtype: "fileupload" });
+    } catch (catboxErr: any) {
+      console.warn(`⚠️ Catbox upload failed (${catboxErr.message}). Retrying via 0x0.st...`);
+      try {
+        return await this.postMultipart("https://0x0.st", "file", buffer, filename, mimeType, {});
+      } catch (fallbackErr: any) {
+        throw new Error(`Catbox: ${catboxErr.message} | 0x0.st: ${fallbackErr.message}`);
+      }
     }
-    return catboxUrl;
+  }
+
+  private async postMultipart(
+    url: string,
+    fileFieldName: string,
+    buffer: Buffer,
+    filename: string,
+    mimeType: string,
+    extraFields: Record<string, string>
+  ): Promise<string> {
+    const formData = new FormData();
+    for (const [key, value] of Object.entries(extraFields)) {
+      formData.append(key, value);
+    }
+    const blob = new Blob([new Uint8Array(buffer)], { type: mimeType });
+    formData.append(fileFieldName, blob, filename);
+
+    const res = await fetch(url, { method: "POST", body: formData });
+    const text = (await res.text()).trim();
+    if (!res.ok || !text.startsWith("http")) {
+      throw new Error(`HTTP ${res.status} ${res.statusText}: ${text.slice(0, 200) || "(empty response)"}`);
+    }
+    return text;
   }
 }
