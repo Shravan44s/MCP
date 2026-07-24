@@ -1,9 +1,11 @@
 // ============================================
-// Meme Service — Fetches trending memes from
-// Reddit and generates AI memes
+// Meme Service — Fetches trending memes from Reddit
+// (via meme-api.com) across many categorized buckets,
+// plus AI meme generation
 // ============================================
 import axios from "axios";
 import FormData from "form-data";
+import type { MemeCandidate } from "../types/index.js";
 
 interface RedditMeme {
   postLink: string;
@@ -24,65 +26,102 @@ interface MemeResult {
   upvotes: number;
   subreddit: string;
   postLink: string;
+  category: string;
 }
 
-// Subreddits mapping to simulate fetching memes from different platforms
-const PLATFORM_SUBREDDITS: Record<string, string[]> = {
-  Reddit: ["memes", "dankmemes", "ProgrammerHumor", "me_irl", "wholesomememes"],
-  Instagram: ["Instagramreality", "comedyheaven", "me_irl"],
-  Facebook: ["terriblefacebookmemes", "insanepeoplefacebook", "oldpeoplefacebook"],
-  YouTube: ["youngpeopleyoutube", "youtubehaiku", "smoobypost"]
+// Wide, categorized subreddit pool for real variety + trending scope.
+// Each bucket is a themed audience segment rather than a literal platform —
+// meme-api.com only proxies Reddit, so "Facebook/Instagram/YouTube flavor"
+// buckets below are curated communities that mimic that content style
+// without actually scraping those platforms (which would violate their ToS).
+export const MEME_CATEGORIES: Record<string, string[]> = {
+  Trending: ["memes", "dankmemes", "funny", "MemeEconomy"],
+  Wholesome: ["wholesomememes", "MadeMeSmile", "aww"],
+  Programmer: ["ProgrammerHumor", "softwaregore", "techsupportgore"],
+  Desi: ["IndianDankMemes", "SaimanSays", "bollywoodmemes"],
+  Gaming: ["pcmasterrace", "gamingmemes", "gaming"],
+  Corporate: ["antiwork", "ExpectationVsReality", "corporatelife"],
+  Animals: ["AnimalsBeingBros", "AnimalsBeingDerps", "aww"],
+  Relationship: ["relationship_memes", "wholesomememes"],
+  BoomerHumor: ["terriblefacebookmemes", "insanepeoplefacebook", "oldpeoplefacebook"],
+  Random: ["me_irl", "meirl", "Instagramreality", "youngpeopleyoutube", "youtubehaiku"],
 };
 
 export class MemeService {
   /**
-   * Fetches trending memes from Reddit via meme-api.com
+   * Fetches trending memes from a category's subreddit pool. Tries a random
+   * sub in the bucket first, and falls back to the next sub (then r/memes)
+   * if that one 404s or is empty, so a single dead subreddit can't break
+   * the whole pipeline.
    * @param count Number of memes to fetch (1-10)
-   * @param platform Optional specific platform (Reddit, Instagram, Facebook, YouTube)
+   * @param category Optional bucket key from MEME_CATEGORIES (random if omitted)
    */
-  async fetchTrending(count: number = 5, platform?: string): Promise<MemeResult[]> {
-    const platforms = Object.keys(PLATFORM_SUBREDDITS);
-    const selectedPlatform = platform && PLATFORM_SUBREDDITS[platform] 
-      ? platform 
-      : platforms[Math.floor(Math.random() * platforms.length)];
-    
-    const subs = PLATFORM_SUBREDDITS[selectedPlatform];
-    const sub = subs[Math.floor(Math.random() * subs.length)];
-    
-    const url = `https://meme-api.com/gimme/${sub}/${Math.min(count, 10)}`;
+  async fetchTrending(count: number = 5, category?: string): Promise<MemeResult[]> {
+    const categories = Object.keys(MEME_CATEGORIES);
+    const selectedCategory = category && MEME_CATEGORIES[category]
+      ? category
+      : categories[Math.floor(Math.random() * categories.length)];
 
-    console.log(`📡 Fetching ${count} memes from r/${sub} (Platform Proxy: ${selectedPlatform})...`);
-    const res = await fetch(url);
-    if (!res.ok) {
-      throw new Error(`Meme API returned ${res.status}`);
+    const subs = [...MEME_CATEGORIES[selectedCategory]].sort(() => Math.random() - 0.5);
+    const fallbackChain = [...subs, "memes"];
+
+    for (const sub of fallbackChain) {
+      try {
+        const url = `https://meme-api.com/gimme/${sub}/${Math.min(count, 10)}`;
+        console.log(`📡 Fetching ${count} memes from r/${sub} (Category: ${selectedCategory})...`);
+        const res = await fetch(url);
+        if (!res.ok) continue;
+
+        const data: { count: number; memes: RedditMeme[] } = await res.json() as any;
+        const safeMemes = (data.memes || []).filter((m) => !m.nsfw && !m.spoiler);
+        if (safeMemes.length === 0) continue;
+
+        return safeMemes.map((m) => ({
+          title: m.title,
+          imageUrl: m.url,
+          source: selectedCategory,
+          upvotes: m.ups,
+          subreddit: m.subreddit,
+          postLink: m.postLink,
+          category: selectedCategory,
+        }));
+      } catch {
+        continue;
+      }
     }
 
-    const data: { count: number; memes: RedditMeme[] } = await res.json() as any;
-
-    // Filter out NSFW and spoiler memes
-    const safeMemes = data.memes.filter((m) => !m.nsfw && !m.spoiler);
-
-    return safeMemes.map((m) => ({
-      title: m.title,
-      imageUrl: m.url,
-      source: selectedPlatform,
-      upvotes: m.ups,
-      subreddit: m.subreddit,
-      postLink: m.postLink,
-    }));
+    return [];
   }
 
   /**
    * Fetches a single random trending meme
-   * @param platform Optional specific platform (Reddit, Instagram, Facebook, YouTube)
+   * @param category Optional bucket key from MEME_CATEGORIES (random if omitted)
    */
-  async fetchRandom(platform?: string): Promise<MemeResult> {
-    const memes = await this.fetchTrending(5, platform);
+  async fetchRandom(category?: string): Promise<MemeResult> {
+    const memes = await this.fetchTrending(5, category);
     if (memes.length === 0) {
       throw new Error("No safe memes found");
     }
     // Pick the one with most upvotes
     return memes.sort((a, b) => b.upvotes - a.upvotes)[0];
+  }
+
+  /**
+   * Fetches trending memes across ALL categories concurrently — used for the
+   * mobile app's dynamic browse feed and the auto-post pipeline's candidate pool.
+   * @param perCategory How many memes to pull from each bucket
+   */
+  async fetchAllCategoriesTrending(perCategory: number = 3): Promise<MemeResult[]> {
+    const categories = Object.keys(MEME_CATEGORIES);
+    const results = await Promise.allSettled(
+      categories.map((cat) => this.fetchTrending(perCategory, cat))
+    );
+
+    const all: MemeResult[] = [];
+    for (const r of results) {
+      if (r.status === "fulfilled") all.push(...r.value);
+    }
+    return all.sort((a, b) => b.upvotes - a.upvotes);
   }
 
   /**
@@ -129,6 +168,7 @@ export class MemeService {
           upvotes: m.ups,
           subreddit: m.subreddit || sub,
           postLink: m.postLink,
+          category: "Search",
         }));
       } catch {
         return [];
@@ -166,7 +206,7 @@ export class MemeService {
       try {
         const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`;
         const styleInstruction = style ? `Render the visual scene in a distinct "${style}" artistic style. ` : "";
-        
+
         const response = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -211,7 +251,7 @@ Respond with ONLY the JSON, no markdown, no explanation.`
     const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(visualPrompt)}?width=1080&height=1080&model=flux&seed=${seed}&nologo=true`;
 
     return { imageUrl, caption };
-  } 
+  }
 
   /**
    * Upload image to Catbox.moe for short permanent URL
@@ -238,4 +278,16 @@ Respond with ONLY the JSON, no markdown, no explanation.`
     console.log("Catbox upload response status:", res.status, "body:", text);
     return text.trim();
   }
+}
+
+/** Normalize a Reddit MemeResult into the shared MemeCandidate shape */
+export function toMemeCandidate(m: MemeResult): MemeCandidate {
+  return {
+    id: m.postLink,
+    title: m.title,
+    imageUrl: m.imageUrl,
+    source: "reddit",
+    category: m.category,
+    score: m.upvotes,
+  };
 }

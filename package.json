@@ -3,10 +3,14 @@
   "version": "1.0.0",
   "description": "MCP server that connects Notion to GitHub, Instagram, and VS Code for automated task execution",
   "type": "module",
+  "engines": {
+    "node": "20.x"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "auto-post": "tsx scripts/auto-post.ts"
   },
   "keywords": [
     "mcp",

@@ -10,7 +10,11 @@ import { GitHubClient } from "../services/github-client.js";
 import { VSCodeClient } from "../services/vscode-client.js";
 import { TelegramClient } from "../services/telegram-client.js";
 import { InstagramClient } from "../services/instagram-client.js";
+import { VideoGenerator } from "../services/video-generator.js";
+import { publishMemeAsReel } from "../services/publisher.js";
 import type { NotionTask, TaskExecutionResult } from "../types/index.js";
+
+const videoGenerator = new VideoGenerator(process.env.GEMINI_API_KEY);
 
 export function registerTaskProcessorTools(
   server: McpServer,
@@ -468,10 +472,10 @@ async function executeInstagramTask(
     };
   }
 
-  const res = await instagram.publishPhoto(imageUrl, task.name);
+  const res = await publishMemeAsReel(instagram, videoGenerator, imageUrl, task.name);
   return {
     success: true,
-    message: `Post published successfully to Instagram! Media ID: ${res.mediaId}`,
+    message: `Reel published successfully to Instagram! Media ID: ${res.mediaId}`,
     data: res,
   };
 }

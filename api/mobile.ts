@@ -6,6 +6,10 @@ import { TelegramClient } from "../src/services/telegram-client.js";
 import { GeminiClient } from "../src/services/gemini-client.js";
 import { OpenCodeChatClient } from "../src/services/opencode-client.js";
 import { MemeService } from "../src/services/meme-service.js";
+import { VideoGenerator } from "../src/services/video-generator.js";
+import { publishMemeAsReel } from "../src/services/publisher.js";
+import { generateSmartCaption } from "../src/services/caption-service.js";
+import { MemeLedger } from "../src/services/meme-ledger.js";
 
 export default async function handler(
   req: VercelRequest,
@@ -53,6 +57,7 @@ export default async function handler(
     const instagram = instagramToken && instagramUserId ? new InstagramClient(instagramToken, instagramUserId) : undefined;
     const telegram = token && chatId ? new TelegramClient(token, chatId) : undefined;
     const memeService = new MemeService();
+    const videoGenerator = new VideoGenerator(geminiApiKey);
 
     switch (action) {
       // ---- General Dashboard ----
@@ -150,6 +155,36 @@ export default async function handler(
         return res.status(200).json({ success: true, data: meme });
       }
 
+      // Dynamic browse feed: pulls trending memes across every category
+      // concurrently so the Memes screen has something fresh to show as
+      // soon as it opens, not just on-demand search results.
+      case "trendingFeed": {
+        const ledger = new MemeLedger();
+        const memes = await memeService.fetchAllCategoriesTrending(2);
+
+        const memeEntries: any[] = [];
+        for (const m of memes) {
+          const caption = await generateSmartCaption(m.title, m.category, geminiApiKey);
+          const page = await notion.createTask({
+            name: caption,
+            platform: "Instagram",
+            priority: "Medium",
+            details: m.imageUrl,
+          });
+          memeEntries.push({
+            title: m.title,
+            imageUrl: m.imageUrl,
+            upvotes: m.upvotes,
+            source: m.category,
+            taskId: page.id,
+            shortId: page.id.replace(/-/g, "").slice(-6),
+            alreadyPosted: ledger.has(m.postLink),
+          });
+        }
+
+        return res.status(200).json({ success: true, data: memeEntries });
+      }
+
       case "searchMemes": {
         const query = req.query.q as string;
         const memes = await memeService.searchByTopic(query || "memes", 5);
@@ -157,7 +192,7 @@ export default async function handler(
         // Pre-create Notion tasks for each meme result so we get stable confirm IDs in the app
         const memeEntries: any[] = [];
         for (const m of memes) {
-          const caption = `${m.title} 😂\n\n#memes #funny #${(query || "memes").replace(/\s+/g, "").toLowerCase()} #viral #trending`;
+          const caption = await generateSmartCaption(m.title, query || "memes", geminiApiKey);
           const page = await notion.createTask({
             name: caption,
             platform: "Instagram",
@@ -217,12 +252,7 @@ export default async function handler(
 
         await notion.updateTaskStatus(task.id, "In Progress");
 
-        let publishRes;
-        if (imageUrl.endsWith(".mp4") || imageUrl.includes(".mp4")) {
-          publishRes = await instagram.publishReel(imageUrl, task.name);
-        } else {
-          publishRes = await instagram.publishPhoto(imageUrl, task.name);
-        }
+        const publishRes = await publishMemeAsReel(instagram, videoGenerator, imageUrl, task.name);
 
         await notion.updateTaskStatus(task.id, "Done");
         await notion.writeResult(task.id, `✅ Published to Instagram. Media ID: ${publishRes.mediaId}`);
@@ -265,12 +295,7 @@ export default async function handler(
                   chatResponse = "❌ Invalid image URL found in task details.";
                 } else {
                   await notion.updateTaskStatus(task.id, "In Progress");
-                  let publishRes;
-                  if (imageUrl.endsWith(".mp4") || imageUrl.includes(".mp4")) {
-                    publishRes = await instagram.publishReel(imageUrl, task.name);
-                  } else {
-                    publishRes = await instagram.publishPhoto(imageUrl, task.name);
-                  }
+                  const publishRes = await publishMemeAsReel(instagram, videoGenerator, imageUrl, task.name);
                   await notion.updateTaskStatus(task.id, "Done");
                   await notion.writeResult(task.id, `✅ Published to Instagram. Media ID: ${publishRes.mediaId}`);
                   chatResponse = `🚀 <b>Instagram Post Deployed!</b>\n\n• <b>Caption:</b> ${task.name}\n• <b>Media ID:</b> <code>${publishRes.mediaId}</code>`;

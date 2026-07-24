@@ -79,12 +79,22 @@ export class VideoGenerator {
       throw new Error("Gemini API key is required for image generation fallback");
     }
 
-    // Step A: Generate Flux Image URL
+    // Generate a brand-new Flux base image from the text prompt, then animate it
     const gemini = new GeminiClient(this.geminiKey);
     console.log("🎨 Generating high-quality Flux base image via Pollinations...");
     const imageUrl = await gemini.generateImage(prompt, { enhance: true });
+    return this.animateImageUrl(imageUrl);
+  }
 
-    // Step B: Setup temp file paths
+  /**
+   * Animates an EXISTING image (e.g. a fetched meme) into a Ken Burns
+   * zoom/pan Reel-ready video, without generating any new visual content.
+   * Use this for real meme images whose content must be preserved as-is —
+   * `generateVideo`/`generateKenBurnsVideo` are for AI-concept prompts where
+   * there's no source image yet.
+   */
+  async animateImageUrl(imageUrl: string): Promise<string> {
+    // Setup temp file paths
     const tmpDir = os.tmpdir();
     const uniqueId = Math.random().toString(36).substring(7);
     const inputImagePath = path.join(tmpDir, `input_${uniqueId}.jpg`);

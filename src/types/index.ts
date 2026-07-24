@@ -5,6 +5,29 @@
 /** The platforms a Notion task can target */
 export type Platform = "GitHub" | "Instagram" | "VSCode" | "Telegram" | "General";
 
+/** Where a meme candidate was sourced from */
+export type MemeSource = "reddit" | "giphy" | "imgflip";
+
+/**
+ * A single meme/GIF candidate normalized across sources (Reddit, Giphy,
+ * Imgflip) so the ledger, caption generator, publisher, and auto-post
+ * pipeline can all work against one shape regardless of origin.
+ */
+export interface MemeCandidate {
+  /** Stable unique id used for no-repeat ledger tracking (postLink / gif id / template+text hash) */
+  id: string;
+  title: string;
+  /** Static image needing animation before it can be posted as a Reel (Reddit, Imgflip) */
+  imageUrl?: string;
+  /** Already-a-video asset that can be posted as-is (Giphy) */
+  videoUrl?: string;
+  source: MemeSource;
+  /** Content bucket, e.g. "Trending", "Programmer", "Desi" — used for caption hashtags & variety rotation */
+  category: string;
+  /** Engagement/trending score used to rank candidates within a category */
+  score: number;
+}
+
 /** Task status in the Notion database */
 export type TaskStatus = "Todo" | "In Progress" | "Done" | "Failed";
 

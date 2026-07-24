@@ -1,0 +1,23 @@
+name: Process Notion Tasks
+
+# Replaces Vercel Cron: pings the already-deployed /api/cron endpoint on a
+# schedule so GitHub is the single source of truth for scheduling, while
+# Vercel keeps serving the API itself.
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  trigger-cron:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call /api/cron
+        run: |
+          curl -sf -X GET "${VERCEL_URL}/api/cron" \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            -o /dev/null -w "Status: %{http_code}\n"
+        env:
+          VERCEL_URL: ${{ secrets.VERCEL_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}

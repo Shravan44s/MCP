@@ -4,7 +4,11 @@ import { GitHubClient } from "../src/services/github-client.js";
 import { VSCodeClient } from "../src/services/vscode-client.js";
 import { TelegramClient } from "../src/services/telegram-client.js";
 import { InstagramClient } from "../src/services/instagram-client.js";
+import { VideoGenerator } from "../src/services/video-generator.js";
+import { publishMemeAsReel } from "../src/services/publisher.js";
 import type { NotionTask, TaskExecutionResult } from "../src/types/index.js";
+
+const videoGenerator = new VideoGenerator();
 
 async function executeGitHubTask(
   task: NotionTask,
@@ -189,10 +193,10 @@ async function executeInstagramTask(
     imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&model=flux&seed=${seed}&nologo=true`;
   }
 
-  const res = await instagram.publishPhoto(imageUrl, caption);
+  const res = await publishMemeAsReel(instagram, videoGenerator, imageUrl, caption);
   return {
     success: true,
-    message: `✅ Post published to Instagram!\nMedia ID: ${res.mediaId}\nImage: ${imageUrl}`,
+    message: `✅ Reel published to Instagram!\nMedia ID: ${res.mediaId}\nVideo: ${res.videoUrl}`,
     data: res,
   };
 }

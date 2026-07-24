@@ -6,6 +6,9 @@ import { TelegramClient } from "../src/services/telegram-client.js";
 import { GeminiClient } from "../src/services/gemini-client.js";
 import { OpenCodeChatClient } from "../src/services/opencode-client.js";
 import { MemeService } from "../src/services/meme-service.js";
+import { VideoGenerator } from "../src/services/video-generator.js";
+import { publishMemeAsReel } from "../src/services/publisher.js";
+import { generateSmartCaption } from "../src/services/caption-service.js";
 
 // Basic HTML styling for Telegram messages
 const HELP_MESSAGE = `
@@ -76,6 +79,7 @@ export default async function handler(
     instagramToken && instagramUserId
       ? new InstagramClient(instagramToken, instagramUserId)
       : undefined;
+  const videoGenerator = new VideoGenerator(geminiApiKey);
 
   try {
     const update = req.body;
@@ -127,15 +131,10 @@ export default async function handler(
           }
 
           await notion.updateTaskStatus(task.id, "In Progress");
-          
-          let publishRes;
-          if (imageUrl.endsWith(".mp4") || imageUrl.includes(".mp4")) {
-            await telegram.sendMessage("🎬 Processing and rendering video Reel on Instagram servers (this takes ~1-2 mins)...");
-            publishRes = await instagram.publishReel(imageUrl, task.name);
-          } else {
-            publishRes = await instagram.publishPhoto(imageUrl, task.name);
-          }
-          
+
+          await telegram.sendMessage("🎬 Rendering video Reel and processing on Instagram servers (this takes ~1-2 mins)...");
+          const publishRes = await publishMemeAsReel(instagram, videoGenerator, imageUrl, task.name);
+
           await notion.updateTaskStatus(task.id, "Done");
           await notion.writeResult(task.id, `✅ Published to Instagram. Media ID: ${publishRes.mediaId}`);
 
@@ -665,9 +664,7 @@ export default async function handler(
           await telegram.sendMessage("🎬 Generating and compiling your animated Reel video (takes ~30-45s)...");
 
           try {
-            const { VideoGenerator } = await import("../src/services/video-generator.js");
-            const generator = new VideoGenerator(process.env.GEMINI_API_KEY);
-            const videoUrl = await generator.generateVideo(args);
+            const videoUrl = await videoGenerator.generateVideo(args);
 
             const page = await notion.createTask({
               name: args,
@@ -734,7 +731,7 @@ export default async function handler(
             await telegram.sendMessage("😂 Fetching a random trending meme...");
             try {
               const meme = await memeService.fetchRandom();
-              const caption = `${meme.title} 😂\n\n#memes #funny #viral #trending #relatable`;
+              const caption = await generateSmartCaption(meme.title, meme.category, geminiApiKey);
               const page = await notion.createTask({
                 name: caption,
                 platform: "Instagram",
@@ -770,7 +767,7 @@ export default async function handler(
               // Create a Notion task for EVERY meme result so each gets its own confirm ID
               const memeEntries: { meme: (typeof memes)[0]; shortId: string }[] = [];
               for (const m of memes) {
-                const memeCaption = `${m.title} 😂\n\n#memes #funny #${memeQuery.replace(/\s+/g, "").toLowerCase()} #viral #trending`;
+                const memeCaption = await generateSmartCaption(m.title, memeQuery, geminiApiKey);
                 const memePage = await notion.createTask({
                   name: memeCaption,
                   platform: "Instagram",
