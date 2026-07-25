@@ -13,16 +13,19 @@ import * as path from "path";
 import * as os from "os";
 import { GeminiClient } from "./gemini-client.js";
 import { hostFilePublicly } from "./media-host.js";
+import { AudioService } from "./audio-service.js";
 
 export class VideoGenerator {
   private geminiKey?: string;
   private githubToken?: string;
   private mediaRepo?: string;
+  private audioService: AudioService;
 
   constructor(geminiKey?: string, githubToken?: string, mediaRepo?: string) {
-    this.geminiKey = geminiKey;
-    this.githubToken = githubToken;
-    this.mediaRepo = mediaRepo;
+    this.geminiKey = geminiKey || process.env.GEMINI_API_KEY;
+    this.githubToken = githubToken || process.env.GITHUB_TOKEN;
+    this.mediaRepo = mediaRepo || process.env.GITHUB_MEDIA_REPO || process.env.GITHUB_REPOSITORY || "Shravan44s/MCP";
+    this.audioService = new AudioService();
   }
 
   /**
@@ -93,20 +96,19 @@ export class VideoGenerator {
 
   /**
    * Animates an EXISTING image (e.g. a fetched meme) into a Ken Burns
-   * zoom/pan Reel-ready video, without generating any new visual content.
-   * Use this for real meme images whose content must be preserved as-is —
-   * `generateVideo`/`generateKenBurnsVideo` are for AI-concept prompts where
-   * there's no source image yet.
+   * zoom/pan Reel-ready video with trending background music, without generating
+   * any new visual content. Video duration is 10 seconds.
    */
   async animateImageUrl(imageUrl: string): Promise<string> {
     // Setup temp file paths
     const tmpDir = os.tmpdir();
     const uniqueId = Math.random().toString(36).substring(7);
-    const inputImagePath = path.join(tmpDir, `input_${uniqueId}.jpg`);
+    let inputImagePath = "";
+    let inputAudioPath = path.join(tmpDir, `audio_${uniqueId}.mp3`);
     const outputVideoPath = path.join(tmpDir, `output_${uniqueId}.mp4`);
 
     try {
-      // Step C: Download image locally
+      // Step C1: Download image locally
       console.log(`📥 Downloading base image: ${imageUrl}`);
       const response = await fetch(imageUrl);
       if (!response.ok) throw new Error("Failed to download base image");
@@ -115,19 +117,22 @@ export class VideoGenerator {
       // Check magic bytes to detect if image is a GIF (GIFs require -ignore_loop 0 instead of -loop 1 in FFmpeg)
       const isGif = buffer.toString("ascii", 0, 3) === "GIF";
       const ext = isGif ? ".gif" : ".jpg";
-      const inputImagePath = path.join(tmpDir, `input_${uniqueId}${ext}`);
-      const outputVideoPath = path.join(tmpDir, `output_${uniqueId}.mp4`);
+      inputImagePath = path.join(tmpDir, `input_${uniqueId}${ext}`);
       fs.writeFileSync(inputImagePath, buffer);
 
-      // Step D: Run FFmpeg to compile Zoom/Pan animated video
+      // Step C2: Download a random trending background music track
+      const { track, buffer: audioBuf } = await this.audioService.fetchAudioBuffer();
+      fs.writeFileSync(inputAudioPath, audioBuf);
+
+      // Step D: Run FFmpeg to compile 10-second Zoom/Pan animated video with audio track
       if (!ffmpegPath) {
         throw new Error("Static FFmpeg binary path could not be resolved");
       }
 
-      console.log(`🎞️ Rendering Ken Burns zoom & panning animation (5 sec, 1080p, Reels ready, format: ${isGif ? "GIF" : "static image"})...`);
+      console.log(`🎞️ Rendering 10-sec Reel animation with track "${track.name}" (${track.genre}, format: ${isGif ? "GIF" : "static image"})...`);
       const loopFlag = isGif ? "-ignore_loop 0" : "-loop 1";
-      // Crop to vertical 9:16 aspect ratio (1080x1920) and apply slow zoom-in with high-quality presets
-      const ffmpegCommand = `"${ffmpegPath}" -y -loglevel error ${loopFlag} -i "${inputImagePath}" -vf "scale=iw*2:ih*2:flags=lanczos,zoompan=z='zoom+0.0015':d=125:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=25" -c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p -t 5 "${outputVideoPath}"`;
+      // Crop to vertical 9:16 aspect ratio (1080x1920), 10s duration (25fps * 10s = 250 frames), AAC audio multiplexing
+      const ffmpegCommand = `"${ffmpegPath}" -y -loglevel error ${loopFlag} -i "${inputImagePath}" -stream_loop -1 -i "${inputAudioPath}" -vf "scale=iw*2:ih*2:flags=lanczos,zoompan=z='zoom+0.0008':d=250:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=25" -c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p -c:a aac -b:a 128k -t 10 "${outputVideoPath}"`;
 
       await new Promise<void>((resolve, reject) => {
         exec(ffmpegCommand, { maxBuffer: 50 * 1024 * 1024 }, (error, stdout, stderr) => {
@@ -140,7 +145,7 @@ export class VideoGenerator {
         });
       });
 
-      console.log(`✅ Render complete! Output saved: ${outputVideoPath}`);
+      console.log(`✅ 10s Render complete with audio! Output saved: ${outputVideoPath}`);
 
       // Step E: Upload to a public host
       console.log("☁️ Uploading animated MP4...");
@@ -151,8 +156,9 @@ export class VideoGenerator {
     } finally {
       // Cleanup temp files
       try {
-        if (fs.existsSync(inputImagePath)) fs.unlinkSync(inputImagePath);
-        if (fs.existsSync(outputVideoPath)) fs.unlinkSync(outputVideoPath);
+        if (inputImagePath && fs.existsSync(inputImagePath)) fs.unlinkSync(inputImagePath);
+        if (inputAudioPath && fs.existsSync(inputAudioPath)) fs.unlinkSync(inputAudioPath);
+        if (outputVideoPath && fs.existsSync(outputVideoPath)) fs.unlinkSync(outputVideoPath);
       } catch (_) {}
     }
   }
