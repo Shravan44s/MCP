@@ -4,6 +4,7 @@ import { GitHubClient } from "../src/services/github-client.js";
 import { InstagramClient } from "../src/services/instagram-client.js";
 import { TelegramClient } from "../src/services/telegram-client.js";
 import { GeminiClient } from "../src/services/gemini-client.js";
+import { GroqClient } from "../src/services/groq-client.js";
 import { OpenCodeChatClient } from "../src/services/opencode-client.js";
 import { MemeService } from "../src/services/meme-service.js";
 import { VideoGenerator } from "../src/services/video-generator.js";
@@ -66,6 +67,7 @@ export default async function handler(
   const gmailAppPassword = process.env.GMAIL_APP_PASSWORD;
   const emailTo = process.env.EMAIL_TO;
   const geminiApiKey = process.env.GEMINI_API_KEY;
+  const groqApiKey = process.env.GROQ_API_KEY;
   const githubMediaRepo = process.env.GITHUB_MEDIA_REPO;
 
   if (!token || !chatId || !notionToken || !notionDbId || !githubToken) {
@@ -732,7 +734,7 @@ export default async function handler(
             await telegram.sendMessage("😂 Fetching a random trending meme...");
             try {
               const meme = await memeService.fetchRandom();
-              const caption = await generateSmartCaption(meme.title, meme.category, geminiApiKey);
+              const caption = await generateSmartCaption(meme.title, meme.category, { groqApiKey, geminiApiKey });
               const page = await notion.createTask({
                 name: caption,
                 platform: "Instagram",
@@ -768,7 +770,7 @@ export default async function handler(
               // Create a Notion task for EVERY meme result so each gets its own confirm ID
               const memeEntries: { meme: (typeof memes)[0]; shortId: string }[] = [];
               for (const m of memes) {
-                const memeCaption = await generateSmartCaption(m.title, memeQuery, geminiApiKey);
+                const memeCaption = await generateSmartCaption(m.title, memeQuery, { groqApiKey, geminiApiKey });
                 const memePage = await notion.createTask({
                   name: memeCaption,
                   platform: "Instagram",
@@ -822,7 +824,7 @@ export default async function handler(
           await telegram.sendMessage(`🎨 Generating AI meme about "<b>${aiConcept}</b>"...`);
 
           try {
-            const result = await aiMemeService.generateAIMeme(aiConcept, geminiApiKey);
+            const result = await aiMemeService.generateAIMeme(aiConcept, { groqApiKey, geminiApiKey });
 
             const page = await notion.createTask({
               name: result.caption,
@@ -883,10 +885,21 @@ export default async function handler(
           chatResponse = await opencode.chat(text, chatSystemPrompt);
           console.log("✅ OpenCode responded successfully");
         } catch (ocErr: any) {
-          console.warn("⚠️ OpenCode unavailable, trying Gemini fallback:", ocErr.message);
+          console.warn("⚠️ OpenCode unavailable, trying Groq fallback:", ocErr.message);
         }
 
-        // Fallback to Gemini if OpenCode failed
+        // Fallback to Groq (much higher free-tier rate limit than Gemini)
+        if (!chatResponse && groqApiKey) {
+          try {
+            const groq = new GroqClient(groqApiKey);
+            chatResponse = await groq.chat(text, chatSystemPrompt);
+            console.log("✅ Groq responded successfully");
+          } catch (groqErr: any) {
+            console.warn("⚠️ Groq unavailable, trying Gemini fallback:", groqErr.message);
+          }
+        }
+
+        // Fallback to Gemini if OpenCode and Groq both failed
         if (!chatResponse && geminiApiKey) {
           try {
             const gemini = new GeminiClient(geminiApiKey);

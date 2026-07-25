@@ -4,6 +4,7 @@ import { GitHubClient } from "../src/services/github-client.js";
 import { InstagramClient } from "../src/services/instagram-client.js";
 import { TelegramClient } from "../src/services/telegram-client.js";
 import { GeminiClient } from "../src/services/gemini-client.js";
+import { GroqClient } from "../src/services/groq-client.js";
 import { OpenCodeChatClient } from "../src/services/opencode-client.js";
 import { MemeService } from "../src/services/meme-service.js";
 import { VideoGenerator } from "../src/services/video-generator.js";
@@ -39,6 +40,7 @@ export default async function handler(
   const instagramToken = process.env.INSTAGRAM_ACCESS_TOKEN;
   const instagramUserId = process.env.INSTAGRAM_USER_ID;
   const geminiApiKey = process.env.GEMINI_API_KEY;
+  const groqApiKey = process.env.GROQ_API_KEY;
   const githubMediaRepo = process.env.GITHUB_MEDIA_REPO;
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
@@ -158,30 +160,21 @@ export default async function handler(
 
       // Dynamic browse feed: pulls trending memes across every category
       // concurrently so the Memes screen has something fresh to show as
-      // soon as it opens, not just on-demand search results.
+      // soon as it opens, not just on-demand search results. Browsing never
+      // touches Notion — a task is only ever created by "confirmPost", once,
+      // for the single meme the user actually chooses to publish.
       case "trendingFeed": {
         const ledger = new MemeLedger();
         const memes = await memeService.fetchAllCategoriesTrending(2);
 
-        const memeEntries: any[] = [];
-        for (const m of memes) {
-          const caption = await generateSmartCaption(m.title, m.category, geminiApiKey);
-          const page = await notion.createTask({
-            name: caption,
-            platform: "Instagram",
-            priority: "Medium",
-            details: m.imageUrl,
-          });
-          memeEntries.push({
-            title: m.title,
-            imageUrl: m.imageUrl,
-            upvotes: m.upvotes,
-            source: m.category,
-            taskId: page.id,
-            shortId: page.id.replace(/-/g, "").slice(-6),
-            alreadyPosted: ledger.has(m.postLink),
-          });
-        }
+        const memeEntries = memes.map((m) => ({
+          id: m.postLink,
+          title: m.title,
+          imageUrl: m.imageUrl,
+          upvotes: m.upvotes,
+          source: m.category,
+          alreadyPosted: ledger.has(m.postLink),
+        }));
 
         return res.status(200).json({ success: true, data: memeEntries });
       }
@@ -190,32 +183,20 @@ export default async function handler(
         const query = req.query.q as string;
         const memes = await memeService.searchByTopic(query || "memes", 5);
 
-        // Pre-create Notion tasks for each meme result so we get stable confirm IDs in the app
-        const memeEntries: any[] = [];
-        for (const m of memes) {
-          const caption = await generateSmartCaption(m.title, query || "memes", geminiApiKey);
-          const page = await notion.createTask({
-            name: caption,
-            platform: "Instagram",
-            priority: "Medium",
-            details: m.imageUrl,
-          });
-          memeEntries.push({
-            title: m.title,
-            imageUrl: m.imageUrl,
-            upvotes: m.upvotes,
-            source: m.source,
-            taskId: page.id,
-            shortId: page.id.replace(/-/g, "").slice(-6),
-          });
-        }
+        const memeEntries = memes.map((m) => ({
+          id: m.postLink,
+          title: m.title,
+          imageUrl: m.imageUrl,
+          upvotes: m.upvotes,
+          source: m.source,
+        }));
 
         return res.status(200).json({ success: true, data: memeEntries });
       }
 
       case "generateAIMeme": {
         const { concept, style } = req.body;
-        const result = await memeService.generateAIMeme(concept, geminiApiKey, style);
+        const result = await memeService.generateAIMeme(concept, { groqApiKey, geminiApiKey }, style);
         const task = await notion.createTask({
           name: result.caption,
           platform: "Instagram",
@@ -236,12 +217,32 @@ export default async function handler(
 
       // ---- Confirm Media Publishing ----
       case "confirmPost": {
-        const { taskId } = req.body;
+        const { taskId, title, imageUrl: browseImageUrl, category } = req.body;
         if (!instagram) {
           throw new Error("Instagram access token or User ID is missing on backend");
         }
 
-        const task = await notion.getTask(taskId);
+        // Two ways in:
+        // 1. taskId — an existing Notion task (Tasks tab, AI Art/Meme generator,
+        //    chat /confirm_ shortcuts) that was already created for its own reason.
+        // 2. title/imageUrl/category — a browsed/searched meme with no Notion
+        //    task yet. We create exactly one here, at the moment the user
+        //    actually confirms the post — not one per meme just for browsing.
+        const task = taskId
+          ? await notion.getTask(taskId)
+          : await (async () => {
+              if (!browseImageUrl || !browseImageUrl.startsWith("http")) {
+                throw new Error("Missing or invalid imageUrl for post confirmation");
+              }
+              const caption = await generateSmartCaption(title || "Meme", category || "memes", { groqApiKey, geminiApiKey });
+              return notion.createTask({
+                name: caption,
+                platform: "Instagram",
+                priority: "Medium",
+                details: browseImageUrl,
+              });
+            })();
+
         if (!task) {
           throw new Error("Pending task not found");
         }
@@ -596,7 +597,7 @@ export default async function handler(
               case "/aiimage": {
                 const aiConcept = args.trim() || "a funny programming meme about debugging at 3am";
                 try {
-                  const result = await memeService.generateAIMeme(aiConcept, geminiApiKey);
+                  const result = await memeService.generateAIMeme(aiConcept, { groqApiKey, geminiApiKey });
                   const page = await notion.createTask({ name: result.caption, platform: "Instagram", priority: "Medium", details: result.imageUrl });
                   const aiShortId = page.id.replace(/-/g, "").slice(-6);
                   chatResponse = `🎨 <b>AI Meme Preview Ready!</b>\n\n📝 <b>Caption:</b> ${result.caption}\n\n👉 Confirm to post: <code>/confirm_${aiShortId}</code>`;
@@ -628,6 +629,15 @@ export default async function handler(
               chatResponse = await opencode.chat(text, chatSystemPrompt);
             } catch (ocErr: any) {
               console.warn("OpenCode unavailable on mobile chat fallback:", ocErr.message);
+            }
+
+            if (!chatResponse && groqApiKey) {
+              try {
+                const groq = new GroqClient(groqApiKey);
+                chatResponse = await groq.chat(text, chatSystemPrompt);
+              } catch (groqErr: any) {
+                console.warn("Groq unavailable on mobile chat fallback:", groqErr.message);
+              }
             }
 
             if (!chatResponse && geminiApiKey) {

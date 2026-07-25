@@ -5,6 +5,7 @@
 // ============================================
 import axios from "axios";
 import FormData from "form-data";
+import { GroqClient } from "./groq-client.js";
 import type { MemeCandidate } from "../types/index.js";
 
 interface RedditMeme {
@@ -197,48 +198,68 @@ export class MemeService {
    * Generates a custom AI meme image using Pollinations.ai
    * Uses Gemini to enhance the meme concept into a visual prompt
    */
-  async generateAIMeme(concept: string, geminiApiKey?: string, style?: string): Promise<{ imageUrl: string; caption: string }> {
+  async generateAIMeme(
+    concept: string,
+    aiKeys?: { groqApiKey?: string; geminiApiKey?: string } | string,
+    style?: string
+  ): Promise<{ imageUrl: string; caption: string }> {
     let visualPrompt = concept;
     let caption = concept;
 
-    // If Gemini is available, use it to create a better meme prompt
-    if (geminiApiKey) {
-      try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`;
-        const styleInstruction = style ? `Render the visual scene in a distinct "${style}" artistic style. ` : "";
-
-        const response = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{
-              parts: [{
-                text: `Create a viral Instagram meme concept. Return ONLY a JSON object with two fields:
+    // Back-compat: a bare string used to mean "geminiApiKey".
+    const keys = typeof aiKeys === "string" ? { geminiApiKey: aiKeys } : aiKeys || {};
+    const styleInstruction = style ? `Render the visual scene in a distinct "${style}" artistic style. ` : "";
+    const prompt = `Create a viral Instagram meme concept. Return ONLY a JSON object with two fields:
 1. "visual": A detailed image generation prompt for a funny meme image (no text overlays, just the visual scene). ${styleInstruction}Under 80 words.
 2. "caption": A short, funny Instagram caption with emojis and hashtags. Under 150 characters.
 
 Meme concept: ${concept}
 
-Respond with ONLY the JSON, no markdown, no explanation.`
-              }]
-            }]
-          }),
+Respond with ONLY the JSON, no markdown, no explanation.`;
+
+    const applyJson = (text: string): boolean => {
+      try {
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) return false;
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (!parsed.visual && !parsed.caption) return false;
+        visualPrompt = parsed.visual || concept;
+        caption = parsed.caption || concept;
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    let enhanced = false;
+
+    // Groq first — much higher free-tier rate limit than Gemini.
+    if (keys.groqApiKey) {
+      try {
+        const groq = new GroqClient(keys.groqApiKey);
+        enhanced = applyJson(await groq.chat(prompt));
+        if (!enhanced) console.warn("⚠️ Could not parse Groq meme JSON, trying Gemini/raw concept");
+      } catch {
+        console.warn("⚠️ Groq meme enhancement failed, trying Gemini/raw concept");
+      }
+    }
+
+    // Gemini as a secondary fallback if Groq wasn't configured or failed.
+    if (!enhanced && keys.geminiApiKey) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${keys.geminiApiKey}`;
+
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
         });
 
         if (response.ok) {
           const data: any = await response.json();
           const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-          try {
-            // Try to parse the JSON from the response
-            const jsonMatch = text.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-              const parsed = JSON.parse(jsonMatch[0]);
-              visualPrompt = parsed.visual || concept;
-              caption = parsed.caption || concept;
-            }
-          } catch {
-            console.warn("⚠️ Could not parse Gemini meme JSON, using raw concept");
-          }
+          enhanced = applyJson(text);
+          if (!enhanced) console.warn("⚠️ Could not parse Gemini meme JSON, using raw concept");
         }
       } catch (err) {
         console.warn("⚠️ Gemini meme enhancement failed, using raw concept");

@@ -6,6 +6,7 @@
 // every time.
 // ============================================
 import { GeminiClient } from "./gemini-client.js";
+import { GroqClient } from "./groq-client.js";
 
 // Broad, high-volume tags every post gets a few of — maximizes initial discovery.
 const MEGA_TAGS = ["#memes", "#funny", "#viral", "#trending", "#reels", "#explorepage", "#instagood"];
@@ -46,24 +47,52 @@ function buildHashtags(category: string): string[] {
   return [...new Set(tags)];
 }
 
+export interface CaptionAiKeys {
+  groqApiKey?: string;
+  geminiApiKey?: string;
+}
+
+function cleanCaption(raw: string): string {
+  return raw.trim().replace(/^["']|["']$/g, "");
+}
+
+function isUsableCaption(text: string): boolean {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  return !lower.includes("i'm sorry") && !lower.includes("encountered an issue");
+}
+
 export async function generateSmartCaption(
   title: string,
   category: string,
-  geminiApiKey?: string
+  aiKeys?: CaptionAiKeys | string
 ): Promise<string> {
-  let line = `${title} 😂`;
+  // Back-compat: a bare string used to mean "geminiApiKey".
+  const keys: CaptionAiKeys = typeof aiKeys === "string" ? { geminiApiKey: aiKeys } : aiKeys || {};
 
-  if (geminiApiKey) {
+  let line = `${title} 😂`;
+  const prompt =
+    `Write a punchy, funny 1-sentence Instagram Reel caption (1-2 emojis, no hashtags, no quotes) ` +
+    `for a "${category}" meme titled: "${title}". Under 120 characters. Return ONLY the caption text.`;
+
+  // Groq first — much higher free-tier rate limit than Gemini, so it
+  // absorbs the per-meme caption calls without tripping 429s.
+  if (keys.groqApiKey) {
     try {
-      const gemini = new GeminiClient(geminiApiKey);
-      const raw = await gemini.chat(
-        `Write a punchy, funny 1-sentence Instagram Reel caption (1-2 emojis, no hashtags, no quotes) ` +
-          `for a "${category}" meme titled: "${title}". Under 120 characters. Return ONLY the caption text.`
-      );
-      const cleaned = raw.trim().replace(/^["']|["']$/g, "");
-      if (cleaned && !cleaned.toLowerCase().startsWith("i'm sorry")) {
-        line = cleaned;
-      }
+      const groq = new GroqClient(keys.groqApiKey);
+      const cleaned = cleanCaption(await groq.chat(prompt));
+      if (isUsableCaption(cleaned)) line = cleaned;
+    } catch {
+      // fall through to Gemini / template
+    }
+  }
+
+  // Gemini as a secondary fallback if Groq wasn't configured or failed.
+  if (line === `${title} 😂` && keys.geminiApiKey) {
+    try {
+      const gemini = new GeminiClient(keys.geminiApiKey);
+      const cleaned = cleanCaption(await gemini.chat(prompt));
+      if (isUsableCaption(cleaned)) line = cleaned;
     } catch {
       // fall back to the template line above
     }

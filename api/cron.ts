@@ -3,12 +3,7 @@ import { NotionClient } from "../src/services/notion-client.js";
 import { GitHubClient } from "../src/services/github-client.js";
 import { VSCodeClient } from "../src/services/vscode-client.js";
 import { TelegramClient } from "../src/services/telegram-client.js";
-import { InstagramClient } from "../src/services/instagram-client.js";
-import { VideoGenerator } from "../src/services/video-generator.js";
-import { publishMemeAsReel } from "../src/services/publisher.js";
 import type { NotionTask, TaskExecutionResult } from "../src/types/index.js";
-
-const videoGenerator = new VideoGenerator(process.env.GEMINI_API_KEY, process.env.GITHUB_TOKEN, process.env.GITHUB_MEDIA_REPO);
 
 async function executeGitHubTask(
   task: NotionTask,
@@ -172,35 +167,6 @@ async function executeTelegramTask(
   };
 }
 
-async function executeInstagramTask(
-  task: NotionTask,
-  instagram: InstagramClient | undefined
-): Promise<TaskExecutionResult> {
-  if (!instagram) {
-    return {
-      success: false,
-      message: "Instagram client is not configured. Set INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_USER_ID environment variables.",
-    };
-  }
-
-  let imageUrl = task.details?.trim();
-  const caption = task.name;
-
-  if (!imageUrl || !imageUrl.startsWith("http")) {
-    // Details is empty or a text prompt. Generate an AI image!
-    const prompt = imageUrl || task.name;
-    const seed = Math.floor(Math.random() * 1000000);
-    imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&model=flux&seed=${seed}&nologo=true`;
-  }
-
-  const res = await publishMemeAsReel(instagram, videoGenerator, imageUrl, caption);
-  return {
-    success: true,
-    message: `✅ Reel published to Instagram!\nMedia ID: ${res.mediaId}\nVideo: ${res.videoUrl}`,
-    data: res,
-  };
-}
-
 export default async function handler(
   req: VercelRequest,
   res: VercelResponse
@@ -219,8 +185,6 @@ export default async function handler(
   const githubToken = process.env.GITHUB_TOKEN;
   const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
   const telegramChatId = process.env.TELEGRAM_CHAT_ID;
-  const instagramToken = process.env.INSTAGRAM_ACCESS_TOKEN;
-  const instagramUserId = process.env.INSTAGRAM_USER_ID;
 
   if (!notionToken || !notionDbId || !githubToken) {
     return res.status(500).json({
@@ -236,13 +200,17 @@ export default async function handler(
       telegramToken && telegramChatId
         ? new TelegramClient(telegramToken, telegramChatId)
         : undefined;
-    const instagramClient =
-      instagramToken && instagramUserId
-        ? new InstagramClient(instagramToken, instagramUserId)
-        : undefined;
 
     // 3. Find pending tasks
-    const tasks = await notionClient.listTasks({ status: "Todo" });
+    const allTasks = await notionClient.listTasks({ status: "Todo" });
+
+    // Instagram posting is intentionally NOT handled by this 30-minute cron —
+    // it only runs twice a day via .github/workflows/auto-post.yml (its own
+    // fresh-pick pipeline), or on-demand via the app's explicit "confirm"
+    // action. Auto-publishing any pending Instagram task here would post
+    // far more often than intended, so those tasks are left untouched
+    // ("Todo") for a human or the mobile app to confirm.
+    const tasks = allTasks.filter((t) => t.platform !== "Instagram");
 
     if (tasks.length === 0) {
       return res.status(200).json({ message: "No pending tasks found" });
@@ -271,9 +239,6 @@ export default async function handler(
               message:
                 "VS Code execution requires a local environment. Cannot run in Vercel serverless cloud.",
             };
-            break;
-          case "Instagram":
-            result = await executeInstagramTask(task, instagramClient);
             break;
           case "Telegram":
             result = await executeTelegramTask(task, telegramClient);
